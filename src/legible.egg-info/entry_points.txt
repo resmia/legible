@@ -1,0 +1,2 @@
+[console_scripts]
+legible = legible.main:main
