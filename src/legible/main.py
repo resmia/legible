@@ -2,6 +2,7 @@ import sys
 
 from legible.analyze.analyzer import analyze_page
 from legible.fetch.page import fetch_page
+from legible.output.writer import write_findings
 
 
 def main():
@@ -13,13 +14,12 @@ def main():
     html = fetch_page(url)
     findings = analyze_page(html)
 
-    print(f"Fetched {len(html)} characters from {url}")
-    print(f"Found {len(findings)} issue(s):")
+    write_findings(findings)
 
-    for finding in findings:
-        print(f"- {finding}")
+    print(f"Fetched {len(html)} characters from {url}")
+    print(f"Found {len(findings)} issue(s)")
+    print("Saved findings to runs/latest/findings.txt")
 
 
 if __name__ == "__main__":
     main()
-    
