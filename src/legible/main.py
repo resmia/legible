@@ -1,5 +1,7 @@
 import sys
 
+from legible.fetch.page import fetch_page
+
 
 def main():
     if len(sys.argv) < 2:
@@ -7,7 +9,9 @@ def main():
         return
 
     url = sys.argv[1]
-    print(f"Legible received: {url}")
+    html = fetch_page(url)
+
+    print(f"Fetched {len(html)} characters from {url}")
 
 
 if __name__ == "__main__":
