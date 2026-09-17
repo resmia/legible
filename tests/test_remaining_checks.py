@@ -283,3 +283,67 @@ def test_unrecognized_mcp_artifact_remains_inconclusive():
 ])
 def test_concept_mentions_are_not_documented_behavior(text, check):
     assert evaluate(REST+text)[check].state != 'pass'
+
+
+@pytest.mark.parametrize('body,media', [
+    ('<h2>Error object</h2><dl><dt>code</dt><dd>string: stable error identifier.</dd>'
+     '<dt>type</dt><dd>string: error category.</dd><dt>message</dt><dd>string</dd>'
+     '<dt>param</dt><dd>string</dd></dl>', 'text/html'),
+    ('## Error types\n type | enum | Possible values: invalid_request, permission_denied. '
+     'invalid_request indicates invalid input; permission_denied indicates insufficient access.', 'text/markdown'),
+    ('Error response: {"code":"invalid_input","type":"validation_error",'
+     '"message":"Invalid input","param":"name"}', 'text/markdown'),
+])
+def test_rendered_error_models(body, media):
+    url = HOME+'errors'
+    finding = evaluate(REST+'<a href="/errors">API errors</a>', {url: obs(url, body, media)})['typed-errors']
+    assert finding.state == 'pass'
+    assert any(e.source_url == url and 'invalid' in e.excerpt.lower() or
+               e.source_url == url and 'stable' in e.excerpt for e in finding.evidence)
+
+
+@pytest.mark.parametrize('body', [
+    '<nav>Errors Code Type Message Param</nav><p>Browse our API reference.</p>',
+    'Error response. HTTP 400 Bad Request; 401 Unauthorized; 500 Internal Server Error.',
+    'Errors are returned when a request cannot complete.',
+    'Source code uses a string type. A message describes a param. Stable APIs are useful.',
+    'Error object is planned. code string stable identifier. message string. param string.',
+    'Error object. code string. type string. message string. param string.',
+    'Error types. type enum possible values. Example only: invalid_request, bad_input.',
+])
+def test_rendered_error_model_false_positive_traps(body):
+    assert evaluate(REST+body)['typed-errors'].state != 'pass'
+
+
+@pytest.mark.parametrize('body', [
+    'Error types are invalid_request and permission_denied, returned for invalid input and denied access.',
+    'Errors Attributes type enum The type of error returned. One of api_error, validation_error. '
+    'message string A readable description. param nullable string The affected parameter.',
+])
+def test_named_rendered_error_categories(body):
+    assert evaluate(REST+body)['typed-errors'].state == 'pass'
+
+
+@pytest.mark.parametrize('body', [
+    'Errors navigation. Widget fields: code string stable product identifier; message string; param string.',
+    'Application error example: throw new Error({"code":"invalid_input"});',
+])
+def test_unrelated_model_and_exception_code_do_not_pass(body):
+    assert evaluate(REST+body)['typed-errors'].state != 'pass'
+
+
+@pytest.mark.parametrize('body', [
+    'Errors navigation. Product example: {"code":"widget","type":"product"}.',
+    'Error response: {"error":"Something went wrong"}.',
+    'Error response: {"message":"Something went wrong","request_id":"req_123"}.',
+])
+def test_json_without_stable_error_identifier_does_not_pass(body):
+    assert evaluate(REST+body)['typed-errors'].state != 'pass'
+
+
+@pytest.mark.parametrize('body', [
+    'Error types are validation and authentication, returned for invalid input and invalid credentials.',
+    'Error object attributes: type enum Possible values: `validation`, `authentication`.',
+])
+def test_enum_error_identifiers_need_not_contain_underscores(body):
+    assert evaluate(REST+body)['typed-errors'].state == 'pass'

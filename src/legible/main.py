@@ -12,10 +12,21 @@ def main(argv: list[str] | None = None) -> int:
     subparsers = parser.add_subparsers(dest="command", required=True)
     scan_parser = subparsers.add_parser("scan", help="scan one domain or HTTP(S) URL")
     scan_parser.add_argument("domain")
+    web_parser = subparsers.add_parser("web", help="open a local browser report service")
+    web_parser.add_argument("--port", type=int, default=8765)
     args = list(sys.argv[1:] if argv is None else argv)
-    if args and args[0] != "scan" and not args[0].startswith("-"):
+    if args and args[0] not in {"scan", "web"} and not args[0].startswith("-"):
         args.insert(0, "scan")
     parsed = parser.parse_args(args)
+
+    if parsed.command == "web":
+        from legible.web import serve
+        try:
+            serve(parsed.port)
+        except (OSError, ValueError) as exc:
+            print(f"Error: {exc}", file=sys.stderr)
+            return 1
+        return 0
 
     try:
         run_path = scan(parsed.domain)

@@ -72,13 +72,45 @@ def _structured(text):
         except ValueError:
             continue
         context = text[max(0, match.start()-180):match.start()+length+100]
-        if (isinstance(value, dict) and FIELDS.intersection(value) and ERROR.search(context)
-                and not re.search(r'catch\s*\(|except\b|console\.log|example only|not returned|planned', context, re.I)):
-            if any(value.get(key) not in (None, '', {}, []) for key in FIELDS.intersection(value)):
+        if (isinstance(value, dict) and ERROR.search(context)
+                and not re.search(r'catch\s*\(|except\b|throw\b|console\.log|example only|not returned|planned', context, re.I)):
+            model = value.get('error') if isinstance(value.get('error'), dict) else value
+            error_context = model is not value or re.search(
+                r'error (?:response|object)|errors? (?:returned|return)|returns? an? error', context, re.I)
+            if error_context and any(
+                    isinstance(model.get(key), (str, int)) and not isinstance(model.get(key), bool)
+                    and re.fullmatch(r'[\w.-]+', str(model[key]))
+                    for key in ('code', 'type', 'error_code')):
                 return context
     match = re.search(r'\berror (?:code|type)\s*[`:\s]+[A-Z][A-Z_]{2,}\b[^.!?]{0,120}', text)
     if match and not re.search(r'planned|example only|not returned', text[max(0, match.start()-80):match.end()], re.I):
         return match[0]
+    return _rendered_error_model(text)
+
+
+def _rendered_error_model(text):
+    """Require local field definitions and stable identifiers, not page keywords."""
+    for anchor in re.finditer(r'\berrors?\b', text, re.I):
+        section = text[anchor.start():anchor.end()+1200]
+        if not re.search(r'\berror (?:object|response|types?|codes?)\b|\btype of error\b', section, re.I):
+            continue
+        if re.search(r'planned|example only|not returned|coming soon|catch\s*\(|except\b|throw\s', section, re.I):
+            continue
+        # Rendered tables lose markup in visible text. Require a field/type row
+        # plus semantics or enumerated identifiers within the same small region.
+        identifier = re.search(r'\b(?:code|error_code|type)\b[`\s|:*–-]*(?:nullable\s+)?(?:string|enum)\b', section, re.I)
+        named = re.findall(r'\b[a-z][a-z0-9]*_(?:[a-z0-9]+_)*[a-z0-9]+\b', section)
+        stable = re.search(r'\b(?:stable|machine.readable|identif(?:ier|ies)|one of|possible values|enum|category|categories)\b', section, re.I)
+        members = re.search(r'\bmessage\b[`\s|:*–-]*string\b', section, re.I)
+        companion = re.search(r'\b(?:param|parameter|request_id)\b[`\s|:*–-]*(?:string|nullable)\b', section, re.I)
+        named_types = re.search(r'\berror (?:types|codes)\s+(?:are|include|can be|one of)\b', section, re.I)
+        enum_list = re.search(
+            r'(?:one of|possible values\s*:|error (?:types|codes) (?:are|include))\s+'
+            r'[`\"\']?[a-z][\w-]*[`\"\']?\s*(?:,|\band\b)\s*[`\"\']?[a-z][\w-]*', section, re.I)
+        categories = len(set(named)) >= 2 or enum_list
+        if (identifier and stable and (members and companion or categories)
+                or named_types and categories):
+            return section
     return None
 
 

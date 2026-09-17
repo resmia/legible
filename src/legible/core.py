@@ -9,6 +9,7 @@ from legible.fetch.page import fetch_page
 from legible.discover.surfaces import discover_surfaces
 from legible.fix.fixer import create_fixes
 from legible.output.writer import write_results
+from legible.models import ScanReport
 
 
 def normalize_target(target: str) -> str:
@@ -35,8 +36,8 @@ def normalize_target(target: str) -> str:
     return urlunsplit((parsed.scheme, netloc, "/", "", ""))
 
 
-def scan(target: str, runs_dir: str = "runs") -> Path:
-    """Discover bounded public resources and retain their observations."""
+def scan_report(target: str) -> ScanReport:
+    """Run the shared pipeline without choosing a presentation or saving files."""
     url = normalize_target(target)
     observation = fetch_page(url)
     def unresolved_checks(discovery):
@@ -47,5 +48,11 @@ def scan(target: str, runs_dir: str = "runs") -> Path:
     classification = classify_surface(discovery)
     findings = analyze_surface(discovery, classification)
     fixes = create_fixes(findings)
-    return write_results(observation, findings, fixes, runs_dir=runs_dir, discovery=discovery,
-                         classification=classification)
+    return ScanReport(observation, discovery, classification, findings, fixes)
+
+
+def scan(target: str, runs_dir: str = "runs") -> Path:
+    """Preserve the CLI/library entry point and existing report format."""
+    report = scan_report(target)
+    return write_results(report.homepage, report.findings, report.fixes, runs_dir=runs_dir,
+                         discovery=report.discovery, classification=report.classification)

@@ -15,6 +15,9 @@ build-backend = "setuptools.build_meta"
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.package-data]
+"legible.output" = ["assets/*.css", "assets/*.js"]
+
 [project.optional-dependencies]
 dev = [
     "pytest>=9.1",

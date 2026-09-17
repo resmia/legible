@@ -3,9 +3,9 @@
 Legible is being built to inspect a domain's public software-facing surface and
 recommend evidence-backed integration improvements. It does not calculate scores.
 
-Build Step 5 discovers a bounded set of public resources, classifies the surface,
-and assesses `openapi`, `auth-mechanism`, and `key-issuance` using only collected
-observations. It writes `report.json` and `report.md`.
+Legible discovers a bounded set of public resources, classifies the surface,
+and assesses seven capabilities using only collected observations. The CLI writes
+`report.json` and `report.md`; a local browser experience presents the same analysis.
 
 ```sh
 python -m venv .venv
@@ -13,6 +13,36 @@ python -m venv .venv
 .venv/bin/legible scan example.com
 .venv/bin/pytest
 ```
+
+For the local browser experience:
+
+```sh
+.venv/bin/legible web
+```
+
+Open `http://127.0.0.1:8765`, enter a public domain such as `example.com`, and
+select **Scan**. Use `legible web --port 8888` to choose another port. Ctrl+C stops
+the service. It binds only to loopback and uses the Python standard library;
+there are no additional web dependencies or frontend build steps.
+
+The report groups findings into **Discover**, **Access**, and **Recover**. Expand
+a finding to inspect what Legible found, why it matters, evidence and provenance,
+and engine-generated remediation for confirmed failures. Statuses read **Clear**,
+**Needs attention**, **Could not verify**, and **Not applicable**. Counts are not
+a score. Mixed surfaces display the classifier's established individual types.
+The collapsed **Sources examined** section retains fetch and discovery details.
+
+Browser scans are ephemeral: no report files, database, or scan history are saved.
+Use the CLI when you want JSON and Markdown files. Rescan runs a fresh scan.
+The service accepts one active scan at a time; it shows a waiting message during
+the request, without incremental progress or cancellation. The existing fetch
+ceiling is not an elapsed-time budget, so slow sources can delay a result.
+This is a local prototype server, not a deployment service.
+
+Both presentations call `core.scan_report()` and consume the same typed
+`ScanReport`. The existing `core.scan()` still writes reports and returns their
+directory. Analysis, discovery, classification, internal states, and serialized
+JSON fields remain unchanged.
 
 A domain defaults to HTTPS. HTTP(S) URLs are accepted and normalized to their
 homepage, dropping paths, queries, and fragments. Legacy `legible <url>` input
