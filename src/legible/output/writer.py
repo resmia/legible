@@ -5,6 +5,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 from legible.fetch.models import FetchObservation
+from legible.discover.surfaces import DiscoveryResult, MAX_FETCHES, MAX_LINKS
 
 
 def _make_run_name(url: str) -> str:
@@ -17,6 +18,7 @@ def _make_markdown_report(
     observation: FetchObservation,
     findings: list[str],
     fixes: list[str],
+    discovery: DiscoveryResult | None = None,
 ) -> str:
     lines = [
         "# Legible Report",
@@ -50,16 +52,27 @@ def _make_markdown_report(
     else:
         lines.append("No fixes generated.")
 
-    lines.extend([
-        "",
-        "## Sources examined",
-        "",
-        f"- Requested URL: {observation.requested_url}",
-        f"- Source URL: {observation.final_url or observation.requested_url}",
-        f"- HTTP status: {observation.status if observation.status is not None else 'unavailable'}",
-        f"- Content type: {observation.content_type or 'unavailable'}",
-        f"- Fetch error: {observation.error or 'none'}",
-    ])
+    lines.extend(["", "## Sources examined", ""])
+    observations = discovery.observations if discovery else [observation]
+    if discovery:
+        lines.extend([
+            f"Discovery caps: {MAX_FETCHES} fetches, including at most {MAX_LINKS} published links.",
+            "Candidates are not validated capabilities. Linked pages are not crawled.", "",
+        ])
+    for index, source in enumerate(observations):
+        lines.extend([
+            f"- Requested URL: {source.requested_url}",
+            f"- Source URL: {source.final_url or source.requested_url}",
+            f"- HTTP status: {source.status if source.status is not None else 'unavailable'}",
+            f"- Content type: {source.content_type or 'unavailable'}",
+            f"- Fetch error: {source.error or 'none'}",
+        ])
+        if discovery:
+            surface = discovery.surfaces[index]
+            lines.append(f"- Discovery reason: {surface.reason}")
+            if surface.source_url:
+                lines.append(f"- Linked from: {surface.source_url}")
+        lines.append("")
 
     return "\n".join(lines) + "\n"
 
@@ -69,6 +82,8 @@ def write_results(
     findings: list[str],
     fixes: list[str],
     runs_dir: str = "runs",
+    *,
+    discovery: DiscoveryResult | None = None,
 ) -> Path:
     run_name = _make_run_name(observation.requested_url)
     run_path = Path(runs_dir) / run_name
@@ -76,12 +91,19 @@ def write_results(
 
     report = {
         "url": observation.requested_url,
-        "observations": [asdict(observation)],
+        "observations": [asdict(item) for item in (discovery.observations if discovery else [observation])],
         "finding_count": len(findings),
         "fix_count": len(fixes),
         "findings": findings,
         "fixes": fixes,
     }
+
+    if discovery:
+        report["discovery"] = {
+            "max_fetches": MAX_FETCHES,
+            "max_linked_fetches": MAX_LINKS,
+            "surfaces": [asdict(surface) for surface in discovery.surfaces],
+        }
 
     json_file = run_path / "report.json"
     markdown_file = run_path / "report.md"
@@ -92,7 +114,7 @@ def write_results(
     )
 
     markdown_file.write_text(
-        _make_markdown_report(observation, findings, fixes),
+        _make_markdown_report(observation, findings, fixes, discovery),
         encoding="utf-8",
     )
 

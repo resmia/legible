@@ -1,10 +1,11 @@
-"""Single-homepage scan scaffold; discovery and product checks come later."""
+"""Controlled discovery scaffold; product checks come later."""
 
 from pathlib import Path
 from urllib.parse import urlsplit, urlunsplit
 
 from legible.analyze.analyzer import analyze_page
 from legible.fetch.page import fetch_page
+from legible.discover.surfaces import discover_surfaces
 from legible.fix.fixer import create_fixes
 from legible.output.writer import write_results
 
@@ -34,11 +35,12 @@ def normalize_target(target: str) -> str:
 
 
 def scan(target: str, runs_dir: str = "runs") -> Path:
-    """Fetch one homepage and retain its observation in the report."""
+    """Discover bounded public resources and retain their observations."""
     url = normalize_target(target)
     observation = fetch_page(url)
     if observation.error is not None:
         raise RuntimeError(observation.error)
+    discovery = discover_surfaces(observation, fetch_page)
     findings = analyze_page(observation)
     fixes = create_fixes(findings)
-    return write_results(observation, findings, fixes, runs_dir=runs_dir)
+    return write_results(observation, findings, fixes, runs_dir=runs_dir, discovery=discovery)

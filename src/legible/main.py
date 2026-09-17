@@ -6,7 +6,7 @@ from legible.core import scan
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        description="Fetch one homepage and write a Legible scaffold report.",
+        description="Discover bounded public surfaces and write a Legible scaffold report.",
         epilog="Product checks are not implemented yet. Legacy legible <url> input is also accepted.",
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -23,7 +23,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Error: {exc}", file=sys.stderr)
         return 1
 
-    print("Homepage fetched. Product checks are not implemented yet; no assessment was made.")
+    print("Controlled discovery complete. Product checks are not implemented yet; no assessment was made.")
     print(f"Saved JSON report to {run_path / 'report.json'}")
     print(f"Saved Markdown report to {run_path / 'report.md'}")
     return 0

@@ -170,7 +170,8 @@ def test_cli_writes_both_reports_without_claiming_a_pass(tmp_path, monkeypatch, 
 
     monkeypatch.setattr(core, 'fetch_page', fetch)
     assert main(args) == 0
-    assert requested == ['https://example.com/']
+    assert requested[0] == 'https://example.com/'
+    assert len(requested) == 11
     report_path, = (tmp_path / 'runs').glob('*/report.json')
     report = json.loads(report_path.read_text())
     assert report['url'] == 'https://example.com/'
