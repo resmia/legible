@@ -1,0 +1,225 @@
+"""Remaining V1 checks: pure interpretation of collected public evidence."""
+import json
+import re
+from urllib.parse import urlsplit, urljoin
+
+import yaml
+
+from legible.analyze.classification import _text
+from legible.analyze.specification import recognize_spec
+
+ERROR = re.compile(r'\berrors?\b|\b[45]\d\d\b|failure', re.I)
+RETRY = re.compile(r'retr(?:y|ies)|backoff|rate.limit|throttl|\b429\b|idempotenc', re.I)
+MCP = re.compile(r'\bMCP\b|Model Context Protocol', re.I)
+FIELDS = {'code', 'type', 'error', 'error_code', 'request_id', 'parameter'}
+BLOCKED = re.compile(r'access denied|verify you are human|captcha|enable javascript|sign in to continue', re.I)
+
+
+def _document(raw):
+    try:
+        return yaml.safe_load(raw)
+    except (yaml.YAMLError, ValueError, RecursionError):
+        return None
+
+
+def _schema_fields(node, document, seen=()):
+    """Follow local references only, with cycle/depth bounds; never fetch refs."""
+    if not isinstance(node, dict) or len(seen) > 20:
+        return False
+    ref = node.get('$ref')
+    if isinstance(ref, str) and ref.startswith('#/') and ref not in seen:
+        target = document
+        for key in ref[2:].split('/'):
+            target = target.get(key.replace('~1', '/').replace('~0', '~'), {}) if isinstance(target, dict) else {}
+        if _schema_fields(target, document, (*seen, ref)):
+            return True
+    properties = node.get('properties')
+    if isinstance(properties, dict) and FIELDS.intersection(properties):
+        return True
+    return any(_schema_fields(value, document, (*seen, 'child')) for key, value in node.items()
+               if (key in {'schema', 'content'} or isinstance(key, str)
+                   and re.fullmatch(r'application/(?:[\w.+-]+\+)?json', key)) and isinstance(value, dict)) or any(
+        _schema_fields(value, document, (*seen, 'child'))
+        for key in ('allOf', 'oneOf', 'anyOf')
+        for value in (node[key] if isinstance(node.get(key), list) else []))
+
+
+def _spec_errors(raw):
+    if not recognize_spec(raw):
+        return None
+    doc = _document(raw)
+    for path, item in doc['paths'].items():
+        if not isinstance(item, dict):
+            continue
+        for method, operation in item.items():
+            if method not in {'get', 'post', 'put', 'patch', 'delete', 'head', 'options'} or not isinstance(operation, dict):
+                continue
+            responses = operation.get('responses', {})
+            if not isinstance(responses, dict):
+                continue
+            for status, response in responses.items():
+                if re.fullmatch(r'[45](?:\d\d|XX)', str(status), re.I) and _schema_fields(response, doc):
+                    return f'{method.upper()} {path}: HTTP {status} response has structured error fields (local references only).'
+    return None
+
+
+def _structured(text):
+    # Require an error context adjacent to an actual JSON object, not exception code.
+    decoder = json.JSONDecoder()
+    for match in re.finditer(r'\{', text):
+        try:
+            value, length = decoder.raw_decode(text[match.start():])
+        except ValueError:
+            continue
+        context = text[max(0, match.start()-180):match.start()+length+100]
+        if (isinstance(value, dict) and FIELDS.intersection(value) and ERROR.search(context)
+                and not re.search(r'catch\s*\(|except\b|console\.log|example only|not returned|planned', context, re.I)):
+            if any(value.get(key) not in (None, '', {}, []) for key in FIELDS.intersection(value)):
+                return context
+    match = re.search(r'\berror (?:code|type)\s*[`:\s]+[A-Z][A-Z_]{2,}\b[^.!?]{0,120}', text)
+    if match and not re.search(r'planned|example only|not returned', text[max(0, match.start()-80):match.end()], re.I):
+        return match[0]
+    return None
+
+
+def _retry(text):
+    for sentence in re.split(r'(?<=[.!?])\s+', text):
+        if re.search(r'\b(?:not supported|not provided|not returned|do not|does not|never retry|coming soon|planned)\b', sentence, re.I):
+            continue
+        if (re.search(r'retry.after', sentence, re.I) and re.search(r'wait|seconds|delay|header', sentence, re.I)
+                or re.search(r'(?:exponential|exponentially).*back.?off|back.?off.*(?:exponential|exponentially)', sentence, re.I)
+                and re.search(r'retr(?:y|ies)|use|apply|recommend|wait', sentence, re.I)
+                or re.search(r'idempotenc', sentence, re.I) and re.search(r'retr(?:y|ies)', sentence, re.I) and re.search(r'safe|same|reuse|prevent', sentence, re.I)
+                or re.search(r'retr(?:y|ies)', sentence, re.I) and re.search(r'\b(?:429|5\d\d|timeout|transient)\b', sentence, re.I) and re.search(r'wait|backoff|after|automatically|retryable|should retry', sentence, re.I)):
+            return sentence
+    return None
+
+
+def _http_url(value):
+    if not isinstance(value, str) or re.search(r'[<>\s{}]', value):
+        return False
+    try:
+        parsed = urlsplit(value)
+        return parsed.scheme in {'http', 'https'} and bool(parsed.hostname) and parsed.username is None
+    except ValueError:
+        return False
+
+
+def _connection(text):
+    if not MCP.search(text):
+        return None
+    for match in MCP.finditer(text):
+        excerpt = text[max(0, match.start()-100):match.end()+500]
+        if re.search(r'coming soon|planned|example only|not available', excerpt, re.I):
+            continue
+        if (re.search(r'connect|endpoint|server URL|mcpServers|configure', excerpt, re.I)
+                and any(_http_url(url) for url in re.findall(r'https?://[^\s<>"`]+', excerpt))):
+            return excerpt
+        if re.search(r'\b(?:npx|uvx)\s+[\w@./-]+', excerpt) and re.search(r'configure|connect|command|run', excerpt, re.I):
+            return excerpt
+    return None
+
+
+def remaining_checks(discovery, classification, finding):
+    observations = discovery.observations
+    texts = {i: t for i, o in enumerate(observations) if (t := _text(o)) and not BLOCKED.search(t)}
+    types = set(classification.detected_types)
+    known = bool(types)
+    complete = not discovery.pending_urls and bool(texts.get(0))
+    # Failed advertised resources leave coverage open; absent speculative probes do not.
+    complete &= all(s.observation_index in texts or (
+        s.reason != 'published_link' and observations[s.observation_index].status in {404, 410})
+        for s in discovery.surfaces)
+    context = set(range(len(observations)))
+    results = []
+
+    indexes = {s.observation_index for s in discovery.surfaces
+               if re.search(r'/(?:llms(?:-full)?\.txt|index\.(?:md|txt))$', urlsplit(s.url).path, re.I)
+               or s.reason == 'published_link' and re.search(
+                   r'machine.readable.*(?:index|documentation)', s.link_text or '', re.I)}
+    usable = []
+    for i in indexes & texts.keys():
+        o = observations[i]
+        # HTML fallbacks and articles about llms.txt are not published text indexes.
+        if (o.content_type or '').split(';')[0] not in {'text/plain', 'text/markdown'}:
+            continue
+        links = re.findall(r'\[([^]\n]+)\]\((https?://[^\s)]+|/[^\s)]*)\)', o.text)
+        if any(re.search(r'docs|documentation|API|reference|auth|SDK|MCP|guide|quickstart|error', label, re.I) for label, _ in links):
+            usable.append((i, o.text[:700]))
+    attempted = {u for o in observations for u in (o.requested_url, o.final_url) if u}
+    docs_origins = {urljoin(o.final_url or o.requested_url, '/llms.txt')
+                    for i, o in enumerate(observations) if i in texts
+                    and (urlsplit(o.final_url or o.requested_url).hostname or '').startswith(('docs.', 'developer.', 'developers.'))}
+    index_coverage = docs_origins <= attempted or bool(usable)
+    if usable:
+        state, reason = 'pass', 'Fetched public documentation index contains useful navigation.'
+    elif classification.kind == 'none':
+        state, reason = 'not_applicable', 'No public developer surface observed.'
+    elif known and complete and index_coverage and indexes and all(observations[i].status in {404, 410} for i in indexes):
+        state, reason = 'fail', 'Examined index candidates are absent in the bounded public surface.'
+    else:
+        state, reason = 'unknown', 'Index coverage or the usefulness of fetched candidate content is inconclusive.'
+    results.append(finding('llms-txt', 'Machine-readable documentation index', state, reason, indexes | context, usable))
+
+    structured = []
+    uncertain_error_schema = False
+    for i, t in texts.items():
+        raw = observations[i].text
+        # Specs must satisfy response-schema rules, not prose/example heuristics.
+        spec = recognize_spec(raw)
+        match = _spec_errors(raw) if spec else _structured(t)
+        uncertain_error_schema |= bool(spec and ERROR.search(t) and not match)
+        if match:
+            structured.append((i, match))
+    retry = [(i, match) for i, t in texts.items() if (match := _retry(t))]
+    for id, title, matches, relevant in (
+        ('typed-errors', 'Structured errors', structured, ERROR),
+        ('retry-guidance', 'Retry guidance', retry, RETRY),
+    ):
+        network = 'rest' in types or any(re.search(r'\b(?:HTTPS? (?:requests?|transport|API)|network requests?|remote (?:server|API)|429)\b|(?:connect|endpoint)[^.!?]{0,100}https?://', t, re.I) for t in texts.values())
+        applicable = 'rest' in types or (known and (bool(matches) or network))
+        examined = [(i, t) for i, t in texts.items() if relevant.search(t)]
+        if applicable and matches:
+            state, reason = 'pass', 'Public documentation provides actionable structured evidence.'
+        elif classification.kind == 'none' or known and not applicable:
+            state, reason = 'not_applicable', 'Observed integration does not establish applicable network/error semantics.'
+        elif (applicable and complete and examined and
+              (id == 'retry-guidance' or not uncertain_error_schema
+               and not any(re.search(r'[`\"](?:code|type|error_code|request_id)[`\"]', t) for _, t in examined)
+               and any(re.search(r'\b[45]\d\d\b|errors? (?:return|response)|returns? .*errors?', t, re.I) for _, t in examined))):
+            state, reason = 'fail', 'Examined relevant documentation provides no actionable '+('structured error semantics.' if id == 'typed-errors' else 'retry guidance.')
+        else:
+            state, reason = 'unknown', 'Relevant documentation coverage or applicability remains incomplete or ambiguous.'
+        results.append(finding(id, title, state, reason, context, matches or examined))
+
+    connections = [(i, match) for i, t in texts.items() if (match := _connection(t))]
+    mcp_indices = {i for i, t in texts.items() if MCP.search(t)}
+    ambiguous_mcp_artifact = False
+    for i, t in texts.items():
+        doc = _document(observations[i].text) if (observations[i].content_type or '').startswith('application/json') else None
+        path = urlsplit(observations[i].requested_url).path
+        if 'mcp' in path and 'server-card' in path:
+            ambiguous_mcp_artifact = True
+        if isinstance(doc, dict) and ('mcpServers' in doc or 'mcp' in path and ('server-card' in path or 'server/card' in path)):
+            if doc.get('name') and isinstance(doc.get('transport'), dict) and _http_url(doc['transport'].get('url')):
+                connections.append((i, t[:700]))
+                mcp_indices.add(i)
+            elif isinstance(doc.get('mcpServers'), dict):
+                for config in doc['mcpServers'].values():
+                    if isinstance(config, dict) and (_http_url(config.get('url')) or config.get('command') and isinstance(config.get('args'), list)):
+                        connections.append((i, t[:700]))
+                        mcp_indices.add(i)
+    established = 'mcp' in types or bool(connections) or any(
+        re.search(r'\b(?:our|the|this) (?:MCP|Model Context Protocol) server\b', t, re.I)
+        and not re.search(r'planned|coming soon|not available|no MCP server', t, re.I)
+        for t in texts.values())
+    if established and connections:
+        state, reason = 'pass', 'Public MCP connection instructions or metadata identify a connection path.'
+    elif not established:
+        state, reason = 'not_applicable', 'No MCP surface established in the collected evidence.'
+    elif complete and mcp_indices and not ambiguous_mcp_artifact:
+        state, reason = 'fail', 'Examined MCP documentation provides no usable public connection descriptor.'
+    else:
+        state, reason = 'unknown', 'MCP is established but connection evidence remains incomplete or inaccessible.'
+    results.append(finding('mcp-discovery', 'MCP discovery', state, reason, mcp_indices | context, connections))
+    return results

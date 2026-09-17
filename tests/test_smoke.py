@@ -153,8 +153,8 @@ def test_cli_writes_both_reports_without_claiming_a_pass(tmp_path, monkeypatch, 
     report = json.loads(report_path.read_text())
     assert report['url'] == 'https://example.com/'
     assert report['observations'][0]['final_url'] == 'https://www.example.com/'
-    assert len(report['findings']) == 3
-    assert report['finding_count'] == 3
+    assert len(report['findings']) == 7
+    assert report['finding_count'] == 7
     markdown = report_path.with_suffix('.md').read_text()
     assert 'Assessed openapi' in markdown
     assert 'No issues found' not in markdown
@@ -175,7 +175,8 @@ def test_cli_fetch_error_is_retained_in_report(tmp_path, monkeypatch, capsys):
     report_path, = (tmp_path / 'runs').glob('*/report.json')
     report = json.loads(report_path.read_text())
     assert len(report['observations']) == 11
-    assert all(f['state'] == 'unknown' for f in report['findings'])
+    assert all(f['state'] == ('not_applicable' if f['id'] == 'mcp-discovery' else 'unknown')
+               for f in report['findings'])
     assert report['fixes'] == []
 
 

@@ -8,7 +8,8 @@ from legible.fetch.models import FetchObservation
 
 HOME = 'https://example.com/'
 SPEC = 'openapi: 3.1.0\ninfo:\n  title: Widgets\npaths: {}\n'
-AUTH = 'API requests authenticate using API keys in the X-API-Key header. '
+BEHAVIOR = 'Error response: {"error": {"code": "invalid_request"}}. Retry transient failures with exponential backoff. '
+AUTH = BEHAVIOR + 'API requests authenticate using API keys in the X-API-Key header. '
 ISSUE = 'Create an API key in the developer dashboard. '
 
 
@@ -69,11 +70,11 @@ def test_stops_lower_priority_expansion_but_preserves_indexes_and_mixed(monkeypa
             f'<a href="/docs/resource-{i}">API resource</a>' for i in range(50))),
         HOME+'docs/llms.txt': ('[OpenAPI](/openapi.yaml)\n[MCP setup](/mcp)', 'text/plain'),
         HOME+'openapi.yaml': (SPEC, 'application/yaml'),
-        HOME+'mcp': html('MCP server: configure your client connection.'),
+        HOME+'mcp': html('MCP server: configure your client connection to https://example.com/mcp.'),
     })
     assert len(calls) == 5
     assert report['classification']['kind'] == 'mixed'
-    assert all(f['state'] == 'pass' for f in report['findings'])
+    assert all(f['state'] in {'pass', 'not_applicable'} for f in report['findings'])
     assert report['discovery']['pending_urls']
     assert 'pass' in markdown
 
@@ -91,13 +92,14 @@ def test_relevance_and_dynamic_priority(monkeypatch, tmp_path):
         HOME+'docs': html('API reference. '+links.replace('</a>', '</a>. ')+'<a href="/openapi.yaml">OpenAPI</a>'),
         HOME+'openapi.yaml': (SPEC, 'application/yaml'),
         HOME+'credentials': html(ISSUE),
+        HOME+'llms.txt': ('[API reference](/docs)', 'text/plain'),
         HOME+'api-auth': html(AUTH),
     })
     assert calls.index(HOME+'credentials') < calls.index(HOME+'api-auth')
     assert HOME+'general-auth' not in calls
     assert HOME+'user-authentication' not in calls
     assert HOME+'api-auth-extra' not in calls
-    assert all(f['state'] == 'pass' for f in report['findings'])
+    assert all(f['state'] in {'pass', 'not_applicable'} for f in report['findings'])
 
 
 def test_unresolved_relevant_evidence_can_exhaust_budget(monkeypatch, tmp_path):
@@ -135,11 +137,12 @@ def test_consumer_links_do_not_outrank_api_auth(monkeypatch, tmp_path, label):
                    '<a href="/api-auth">API request authentication</a>. '
                    '<a href="/openapi.yaml">OpenAPI</a>'),
         HOME+'openapi.yaml': (SPEC, 'application/yaml'),
+        HOME+'llms.txt': ('[API reference](/docs)', 'text/plain'),
         HOME+'api-auth': html(AUTH),
     })
     assert HOME+'api-auth' in calls
     assert HOME+'docs/marketing' not in calls
-    assert all(f['state'] == 'pass' for f in report['findings'])
+    assert all(f['state'] in {'pass', 'not_applicable'} for f in report['findings'])
 
 
 def test_documented_host_failure_remains_unavailable(monkeypatch, tmp_path):
@@ -160,7 +163,8 @@ def test_pending_auth_pointer_is_followed_when_other_checks_pass(monkeypatch, tm
                          '<a href="/docs/llms.txt">Index</a>'),
         HOME+'docs/llms.txt': ('[Request authentication](/api-auth)', 'text/plain'),
         HOME+'openapi.yaml': (SPEC, 'application/yaml'),
+        HOME+'llms.txt': ('[API reference](/docs)', 'text/plain'),
         HOME+'api-auth': html(AUTH),
     })
     assert HOME+'api-auth' in calls
-    assert all(f['state'] == 'pass' for f in report['findings'])
+    assert all(f['state'] in {'pass', 'not_applicable'} for f in report['findings'])

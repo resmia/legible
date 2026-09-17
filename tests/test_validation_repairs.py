@@ -56,7 +56,7 @@ def test_controlled_publisher_patterns(pages, kind, auth, issuance, followed):
     assert len(calls) == len(set(calls)) < MAX_FETCHES
     if kind == 'mcp':
         assert findings['openapi'].state == 'not_applicable'
-    assert {f.id for f in findings.values()} == {'openapi', 'auth-mechanism', 'key-issuance'}
+    assert {f.id for f in findings.values()} == {'openapi', 'auth-mechanism', 'key-issuance', 'llms-txt', 'typed-errors', 'retry-guidance', 'mcp-discovery'}
 
 
 @pytest.mark.parametrize('error', [(403, 'HTTP error: 403'), (None, 'DNS lookup failed')])
@@ -114,17 +114,18 @@ def test_index_followups_do_not_expand_terminal_auth_pages():
 
 
 def test_scan_stops_guessing_when_published_evidence_settles_checks(tmp_path, monkeypatch):
-    pages = {HOME: 'API reference. '+AUTH+ISSUE+'<a href="/openapi.json">OpenAPI</a>',
+    pages = {HOME: 'API reference. '+AUTH+ISSUE+'Error response: {"code": "invalid_request"}. Retry with exponential backoff. <a href="/openapi.json">OpenAPI</a>',
+             HOME+'llms.txt': '[API reference](/)',
              HOME+'openapi.json': '{"openapi":"3.1.0","info":{},"paths":{}}'}
     calls = []
     def fetch(url):
         calls.append(url)
-        return FetchObservation(url, url, 200, 'text/html', pages[url])
+        return FetchObservation(url, url, 200, 'text/plain' if url.endswith('.txt') else 'text/html', pages[url])
     monkeypatch.setattr(core, 'fetch_page', fetch)
     path = core.scan(HOME, str(tmp_path))
     report = json.loads((path/'report.json').read_text())
-    assert calls == [HOME, HOME+'openapi.json']
-    assert all(f['state'] == 'pass' for f in report['findings'])
+    assert calls == [HOME, HOME+'openapi.json', HOME+'llms.txt']
+    assert all(f['state'] in {'pass', 'not_applicable'} for f in report['findings'])
     assert report['discovery']['pending_urls']
 
 

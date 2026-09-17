@@ -37,10 +37,10 @@ strip a leading `www.`, and are skipped for IP addresses and single-label hosts.
 
 Discovery prioritizes explicit documentation entry points and publisher-provided
 indexes/specifications/MCP pointers, then structured file probes. It next selects
-API/request-authentication and credential-acquisition links for unresolved checks,
+API/request-authentication, credential-acquisition, error/schema, and retry/rate-limit links for unresolved checks,
 followed by host guesses and secondary documentation. Customer-authentication
 marketing does not receive API-authentication priority without developer context.
-Core reevaluates the three pure checks between fetches; discovery uses unresolved
+Core reevaluates the seven pure checks between fetches; discovery uses unresolved
 check IDs to reorder candidates. Checks never fetch.
 Successful seed HTML and Markdown/text indexes supply links. One
 documentation-entry layer and one index layer may supply follow-ups, with a
@@ -51,7 +51,7 @@ are rejected or removed; requested and final URLs are deduplicated.
 
 The maximum is **30 fetch-layer calls**, including the homepage and at most 29
 published links. No guessed hosts or file paths were added. Discovery stops when
-the finite candidate queue is exhausted. Once all three implemented checks pass
+the finite candidate queue is exhausted. Once all seven implemented checks pass
 or are explicitly not applicable, discovery skips remaining secondary links and
 guesses. Explicit entry/index/specification/MCP pointers still receive attention
 because they may expose another integration surface. Unresolved checks can use
@@ -87,7 +87,7 @@ developer hints, and no reached published-link cap. Incomplete or ambiguous
 material produces `unknown`. Incidental keywords and candidate URLs alone never
 establish a positive type. Positive types do not imply exhaustive coverage.
 
-The three checks are deterministic and make no network requests. OpenAPI recognizes
+The seven checks are deterministic and make no network requests. OpenAPI recognizes
 JSON and safely parsed YAML with root version, info, and paths
 mappings (using PyYAML); this is not schema validation. An absence failure requires
 an established REST surface and explicit 404/410 responses at all examined spec candidates,
@@ -103,5 +103,33 @@ Failed speculative hosts remain recorded but do not by themselves describe
 documented evidence as blocked.
 
 These narrow text rules can miss valid wording, structured security
-schemes, and credential paths beyond the existing discovery cap. No later checks,
-authenticated requests, or behavioral validation are implemented.
+schemes, and credential paths beyond the existing discovery cap. No authenticated
+requests or behavioral validation are implemented.
+
+Step 6 adds the remaining four V1 checks without changing the report schema:
+
+- `llms-txt` recognizes useful Markdown documentation links in a fetched text index
+  at a defined llms/index path or an explicitly published machine-readable index.
+  Main-host and documentation-host indexes count; HTML fallbacks and mentions do not.
+  Absence fails only with an established surface, examined candidate locations, and
+  complete bounded coverage. An unexamined docs-host index keeps the result unknown.
+- `typed-errors` recognizes documented JSON error objects, named error codes, and
+  OpenAPI error response schemas, including bounded local references. Status lists
+  and generic error prose cannot pass. A failure requires examined exposed error
+  semantics and complete coverage; ambiguous prose remains unknown.
+- `retry-guidance` recognizes Retry-After instructions, exponential backoff, safe
+  idempotent retries, and retry rules tied to transient conditions. Bare rate limits
+  and status codes cannot pass. Local-only integrations can be not applicable.
+- `mcp-discovery` recognizes explicit public MCP URLs/setup commands and supported
+  JSON connection descriptors (server-card transport or mcpServers configuration).
+  A non-MCP surface is not applicable. An established MCP surface fails only after
+  complete bounded coverage without connection information.
+
+All conclusions retain observation evidence. Positive evidence can settle a check
+while other sources remain unavailable; pending or inaccessible documentation
+prevents absence-based failures. Unknown findings never generate remediation.
+These conservative recognizers are not exhaustive documentation/schema parsers:
+unsupported index formats, MCP metadata variants, external schema references,
+ambiguous wording, and inaccessible or deeply nested documentation may remain unknown.
+The existing classifier is unchanged; a recognized connection artifact can establish
+MCP applicability for its check even when classification remains uncertain.

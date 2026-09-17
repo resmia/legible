@@ -28,7 +28,7 @@ def _make_markdown_report(
         "",
         f"URL: {observation.requested_url}",
         "",
-        "Assessed openapi, auth-mechanism, and key-issuance from public observations.",
+        f"Assessed {', '.join(f.id for f in findings)} from public observations." if findings else "No checks assessed.",
         "",
         f"Findings: {len(findings)}",
         f"Fixes: {len(fixes)}",

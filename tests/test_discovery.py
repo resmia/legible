@@ -129,7 +129,7 @@ def test_scan_serializes_all_evidence_and_provenance(tmp_path, monkeypatch):
     monkeypatch.setattr(core, 'fetch_page', fetch)
     path = core.scan(HOME, str(tmp_path))
     report = json.loads((path / 'report.json').read_text())
-    assert len(report['findings']) == 3
+    assert len(report['findings']) == 7
     assert len(report['observations']) == 12
     for surface in report['discovery']['surfaces']:
         assert report['observations'][surface['observation_index']]['requested_url'] == surface['url']

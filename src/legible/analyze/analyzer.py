@@ -5,6 +5,7 @@ from urllib.parse import urlsplit
 from legible.analyze.classification import SurfaceClassification, _text
 from legible.analyze.specification import recognize_spec
 from legible.analyze.models import Finding, FindingEvidence
+from legible.analyze.remaining import remaining_checks
 from legible.discover.surfaces import DiscoveryResult
 from legible.fix.fixer import remediation
 
@@ -124,4 +125,4 @@ def analyze_surface(discovery: DiscoveryResult, classification: SurfaceClassific
     elif state != 'not_applicable':
         state, reason = 'unknown', 'Credential requirements or authentication mechanism remain unresolved.'
     results.append(finding('key-issuance', 'Credential issuance', state, reason, docs, auth + issuance + no_auth))
-    return results
+    return results + remaining_checks(discovery, classification, finding)

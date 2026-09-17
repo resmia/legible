@@ -19,7 +19,7 @@ MAX_FETCHES = 30
 MAX_NAVIGATION_DEPTH = 3
 RELEVANT = re.compile(
     r"\b(?:api|docs|documentation|developer|developers|authentication|auth|credentials?|keys?|tokens?|oauth|bearer|authorization|secrets?|settings|getting[ _-]?started|llms|reference|index[.](?:md|txt)|"
-    r"errors?|rate[\s_-]*limits?|retr(?:y|ies)|mcp|agent[\s_-]*setup|openapi|swagger)\b",
+    r"errors?|backoff|idempotency|429|schema|rate[\s_-]*limits?|retr(?:y|ies)|mcp|agent[\s_-]*setup|openapi|swagger)\b",
     re.IGNORECASE,
 )
 
@@ -120,7 +120,7 @@ class _Links(HTMLParser):
             self.label = []
 
 
-IMPLEMENTED_CHECKS = frozenset({'openapi', 'auth-mechanism', 'key-issuance'})
+IMPLEMENTED_CHECKS = frozenset({'openapi', 'auth-mechanism', 'key-issuance', 'llms-txt', 'typed-errors', 'retry-guidance', 'mcp-discovery'})
 
 
 def _priority(url, label, reason, unresolved):
@@ -149,6 +149,12 @@ def _priority(url, label, reason, unresolved):
         return 3
     if ('auth-mechanism' in unresolved and developer and
             re.search(r'auth|bearer|api keys?|credential|oauth|token|secrets?', value)):
+        return 4
+    needs = {'typed-errors': r'error|schema|failure',
+             'retry-guidance': r'retry|retries|backoff|rate.limit|429|idempotenc',
+             'llms-txt': r'machine.readable.*(?:index|documentation)',
+             'mcp-discovery': r'server.card|well.known|mcp.*(?:setup|endpoint)'}
+    if any(check in unresolved and re.search(pattern, value) for check, pattern in needs.items()):
         return 4
     # General docs may help, but never preempt explicit check-relevant pointers.
     return 6
