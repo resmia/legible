@@ -22,12 +22,12 @@ def main():
     findings = analyze_page(html)
     fixes = create_fixes(findings)
 
-    write_results(url, findings, fixes)
+    run_path = write_results(url, findings, fixes)
 
     print(f"Fetched {len(html)} characters from {url}")
     print(f"Found {len(findings)} issue(s)")
     print(f"Generated {len(fixes)} fix(es)")
-    print("Saved results to runs/latest/")
+    print(f"Saved report to {run_path / 'report.json'}")
 
 
 if __name__ == "__main__":

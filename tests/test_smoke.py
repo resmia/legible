@@ -18,22 +18,26 @@ def test_page_with_title_and_h1_has_no_findings():
 
     assert findings == []
 
+import json
+
 from legible.output.writer import write_results
 
 
-def test_writer_saves_url_findings_and_fixes(tmp_path):
-    output_dir = tmp_path / "run"
-
-    write_results(
+def test_writer_saves_structured_report(tmp_path):
+    run_path = write_results(
         "https://example.com",
         ["Page is missing an H1."],
         ["Add one clear <h1> heading describing the page."],
-        output_dir=str(output_dir),
+        runs_dir=str(tmp_path),
     )
 
-    findings_contents = (output_dir / "findings.txt").read_text()
-    fixes_contents = (output_dir / "fixes.txt").read_text()
+    report_file = run_path / "report.json"
+    report = json.loads(report_file.read_text())
 
-    assert "URL: https://example.com" in findings_contents
-    assert "Page is missing an H1." in findings_contents
-    assert "Add one clear <h1> heading describing the page." in fixes_contents
+    assert report["url"] == "https://example.com"
+    assert report["finding_count"] == 1
+    assert report["fix_count"] == 1
+    assert report["findings"] == ["Page is missing an H1."]
+    assert report["fixes"] == [
+        "Add one clear <h1> heading describing the page."
+    ]
