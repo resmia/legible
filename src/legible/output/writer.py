@@ -4,6 +4,7 @@ from datetime import datetime
 from pathlib import Path
 from urllib.parse import urlparse
 
+from legible.analyze.classification import SurfaceClassification
 from legible.fetch.models import FetchObservation
 from legible.discover.surfaces import DiscoveryResult, MAX_FETCHES, MAX_LINKS
 
@@ -19,6 +20,7 @@ def _make_markdown_report(
     findings: list[str],
     fixes: list[str],
     discovery: DiscoveryResult | None = None,
+    classification: SurfaceClassification | None = None,
 ) -> str:
     lines = [
         "# Legible Report",
@@ -30,10 +32,18 @@ def _make_markdown_report(
         f"Findings: {len(findings)}",
         f"Fixes: {len(fixes)}",
         "",
-        "## Findings",
-        "",
     ]
 
+    if classification:
+        section = ["## Surface classification", "", f"Surface: {classification.kind}",
+                   classification.reason, ""]
+        for item in classification.evidence:
+            section.append(f"- Observation {item.observation_index}: {item.source_url} — "
+                           f"{item.signal}: {item.excerpt}")
+        section.append("")
+        lines.extend(section)
+
+    lines.extend(["## Findings", ""])
     if findings:
         for finding in findings:
             lines.append(f"- {finding}")
@@ -84,6 +94,7 @@ def write_results(
     runs_dir: str = "runs",
     *,
     discovery: DiscoveryResult | None = None,
+    classification: SurfaceClassification | None = None,
 ) -> Path:
     run_name = _make_run_name(observation.requested_url)
     run_path = Path(runs_dir) / run_name
@@ -97,6 +108,9 @@ def write_results(
         "findings": findings,
         "fixes": fixes,
     }
+
+    if classification:
+        report["classification"] = asdict(classification)
 
     if discovery:
         report["discovery"] = {
@@ -114,7 +128,7 @@ def write_results(
     )
 
     markdown_file.write_text(
-        _make_markdown_report(observation, findings, fixes, discovery),
+        _make_markdown_report(observation, findings, fixes, discovery, classification),
         encoding="utf-8",
     )
 

@@ -3,8 +3,8 @@
 Legible is being built to inspect a domain's public software-facing surface and
 recommend evidence-backed integration improvements. It does not calculate scores.
 
-The current Step 3 scaffold discovers a bounded set of public resources and writes
-`report.json` and `report.md`. Product checks and classification are not implemented yet. Empty findings
+The current Step 4 scaffold discovers a bounded set of public resources and writes
+`report.json` and `report.md`. Surface classification uses the collected evidence. Product checks are not implemented yet. Empty findings
 do not mean the site passed an assessment.
 
 ```sh
@@ -49,3 +49,24 @@ The additive JSON `discovery` object records these caps and a `surfaces` list.
 Each entry records `url`, `reason` (`homepage`, `likely_host`, `public_file`, or
 `published_link`), `source_url`, `link_text`, and an `observation_index` into
 `observations`. These are attempted candidates, not verified capabilities.
+
+The additive `classification` object contains `kind`, `detected_types`, `reason`,
+and `evidence`. Categories are `rest`, `mcp`, `sdk`, `cli`, `mixed`, `none`, and
+`unknown`. Evidence records the observation index, final/source URL, signal, and
+excerpt; the index links to unchanged fetch metadata and discovery provenance.
+Markdown renders the same classification and evidence.
+
+Classification performs no network activity. Narrow signals include OpenAPI or
+Swagger JSON document shapes, REST API documentation with HTTP endpoint examples,
+MCP server documentation with connection instructions, and SDK/CLI documentation
+with nearby installation commands. This recognizes published material, not its
+validity or runtime behavior. Multiple observed types produce `mixed`. JSON spec
+recognition is deliberately limited; YAML and unrecognized discovery artifacts
+remain uncertain unless documentation supplies a supported signal.
+
+`none` means no software-facing evidence in the bounded examined surface, not
+absence across the whole site. It requires readable homepage content, completed
+initial probes, readable responses or explicit 404/410 responses, no ambiguous
+developer hints, and no reached published-link cap. Incomplete or ambiguous
+material produces `unknown`. Incidental keywords and candidate URLs alone never
+establish a positive type. Positive types do not imply exhaustive coverage.
