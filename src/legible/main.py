@@ -13,7 +13,12 @@ def main():
 
     url = sys.argv[1]
 
-    html = fetch_page(url)
+    try:
+        html = fetch_page(url)
+    except RuntimeError as exc:
+        print(f"Error: {exc}")
+        return
+
     findings = analyze_page(html)
     fixes = create_fixes(findings)
 
@@ -27,4 +32,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-    
