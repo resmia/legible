@@ -20,6 +20,8 @@ def _make_markdown_report(
         "",
         f"URL: {url}",
         "",
+        "Product checks are not implemented yet; no assessment was made.",
+        "",
         f"Findings: {len(findings)}",
         f"Fixes: {len(fixes)}",
         "",
@@ -31,7 +33,7 @@ def _make_markdown_report(
         for finding in findings:
             lines.append(f"- {finding}")
     else:
-        lines.append("No issues found.")
+        lines.append("No findings generated.")
 
     lines.extend([
         "",
@@ -43,7 +45,7 @@ def _make_markdown_report(
         for fix in fixes:
             lines.append(f"- {fix}")
     else:
-        lines.append("No fixes needed.")
+        lines.append("No fixes generated.")
 
     return "\n".join(lines) + "\n"
 

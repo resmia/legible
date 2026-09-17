@@ -1,34 +1,33 @@
+import argparse
 import sys
 
-from legible.analyze.analyzer import analyze_page
-from legible.fetch.page import fetch_page
-from legible.fix.fixer import create_fixes
-from legible.output.writer import write_results
+from legible.core import scan
 
 
-def main():
-    if len(sys.argv) < 2:
-        print("Usage: legible <url>")
-        return
-
-    url = sys.argv[1]
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        description="Fetch one homepage and write a Legible scaffold report.",
+        epilog="Product checks are not implemented yet. Legacy legible <url> input is also accepted.",
+    )
+    subparsers = parser.add_subparsers(dest="command", required=True)
+    scan_parser = subparsers.add_parser("scan", help="scan one domain or HTTP(S) URL")
+    scan_parser.add_argument("domain")
+    args = list(sys.argv[1:] if argv is None else argv)
+    if args and args[0] != "scan" and not args[0].startswith("-"):
+        args.insert(0, "scan")
+    parsed = parser.parse_args(args)
 
     try:
-        html = fetch_page(url)
-    except RuntimeError as exc:
-        print(f"Error: {exc}")
-        return
+        run_path = scan(parsed.domain)
+    except (ValueError, RuntimeError) as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 1
 
-    findings = analyze_page(html)
-    fixes = create_fixes(findings)
-
-    run_path = write_results(url, findings, fixes)
-
-    print(f"Fetched {len(html)} characters from {url}")
-    print(f"Found {len(findings)} issue(s)")
-    print(f"Generated {len(fixes)} fix(es)")
-    print(f"Saved report to {run_path / 'report.json'}")
+    print("Homepage fetched. Product checks are not implemented yet; no assessment was made.")
+    print(f"Saved JSON report to {run_path / 'report.json'}")
+    print(f"Saved Markdown report to {run_path / 'report.md'}")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

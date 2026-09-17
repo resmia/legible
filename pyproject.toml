@@ -1,7 +1,7 @@
 [project]
 name = "legible"
 version = "0.1.0"
-description = "Web interface analysis and remediation tooling"
+description = "Public software-surface inspection tooling"
 requires-python = ">=3.11"
 dependencies = []
 
