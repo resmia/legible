@@ -30,9 +30,9 @@ def discover(homepage, responses=None):
 def test_fixed_candidates_and_failed_probe_evidence():
     result, calls = discover(html(HOME))
     assert calls == [
+        *[HOME.rstrip('/') + path for path in PUBLIC_FILES],
         'https://docs.example.com/', 'https://api.example.com/',
         'https://developer.example.com/', 'https://developers.example.com/',
-        *[HOME.rstrip('/') + path for path in PUBLIC_FILES],
     ]
     assert len(result.observations) == 11
     assert all(item.error == 'offline' for item in result.observations[1:])
@@ -81,7 +81,7 @@ def test_deterministic_global_link_and_fetch_caps():
     assert calls == again_calls
     assert result == again
     assert len(result.observations) == MAX_FETCHES == 30
-    assert calls == [f'{HOME}api/{i}' for i in range(29)]
+    assert calls[10:] == [f'{HOME}api/{i}' for i in range(19)]
 
 
 @pytest.mark.parametrize('link', [

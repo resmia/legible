@@ -39,11 +39,11 @@ def scan(target: str, runs_dir: str = "runs") -> Path:
     """Discover bounded public resources and retain their observations."""
     url = normalize_target(target)
     observation = fetch_page(url)
-    def sufficient(discovery):
+    def unresolved_checks(discovery):
         findings = analyze_surface(discovery, classify_surface(discovery))
-        return bool(findings) and all(f.state in {'pass', 'not_applicable'} for f in findings)
+        return frozenset(f.id for f in findings if f.state not in {'pass', 'not_applicable'})
 
-    discovery = discover_surfaces(observation, fetch_page, sufficient=sufficient)
+    discovery = discover_surfaces(observation, fetch_page, unresolved_checks=unresolved_checks)
     classification = classify_surface(discovery)
     findings = analyze_surface(discovery, classification)
     fixes = create_fixes(findings)

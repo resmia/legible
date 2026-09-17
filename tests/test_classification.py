@@ -132,7 +132,7 @@ def test_positive_evidence_survives_incomplete_coverage():
 
 @pytest.mark.parametrize('media,text', [
     ('application/json', '{"name":"fixture"}'),
-    ('application/yaml', 'openapi: 3.1.0\ninfo:\n  title: Example\npaths: {}'),
+    ('application/yaml', 'title: Example\npaths: {}'),
 ])
 def test_unrecognized_structured_artifacts_remain_unknown(media, text):
     url = HOME + 'openapi.json'

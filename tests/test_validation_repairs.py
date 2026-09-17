@@ -79,7 +79,9 @@ def test_pointers_preempt_guesses_and_low_value_links():
              HOME+'docs/llms.txt': '[API reference](/reference)',
              HOME+'docs/api/auth': 'API reference. '+AUTH+ISSUE}
     discovery, _, findings, calls = run(pages)
-    assert calls[:4] == [HOME, HOME+'docs', HOME+'docs/llms.txt', HOME+'docs/api/auth']
+    assert calls[:4] == [HOME, HOME+'docs', HOME+'docs/llms.txt', HOME+'reference']
+    assert calls.index(HOME+'docs/api/auth') < calls.index('https://docs.example.com/')
+    assert calls.index(HOME+'docs/api/auth') < calls.index(HOME+'docs/product-0')
     assert len(calls) == MAX_FETCHES
     assert discovery.pending_urls
     assert findings['key-issuance'].state == 'pass'

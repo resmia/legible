@@ -18,7 +18,7 @@ MAX_LINKS = 29
 MAX_FETCHES = 30
 MAX_NAVIGATION_DEPTH = 3
 RELEVANT = re.compile(
-    r"\b(?:api|docs|documentation|developer|developers|authentication|auth|credentials?|llms|reference|index[.](?:md|txt)|"
+    r"\b(?:api|docs|documentation|developer|developers|authentication|auth|credentials?|keys?|tokens?|oauth|bearer|authorization|secrets?|settings|getting[ _-]?started|llms|reference|index[.](?:md|txt)|"
     r"errors?|rate[\s_-]*limits?|retr(?:y|ies)|mcp|agent[\s_-]*setup|openapi|swagger)\b",
     re.IGNORECASE,
 )
@@ -120,21 +120,43 @@ class _Links(HTMLParser):
             self.label = []
 
 
-def _priority(url, label):
-    value = f"{urlsplit(url).path} {label}"
-    for priority, pattern in enumerate((
-        r"llms|openapi|swagger|index\.(?:md|txt|json)",
-        r"auth|credential|api[ -]?keys?",
-        r"api|reference|errors?|rate[ _-]?limits?|retry|mcp|agent[ _-]?setup",
-    )):
-        if re.search(pattern, value, re.I):
-            return priority
-    return 3
+IMPLEMENTED_CHECKS = frozenset({'openapi', 'auth-mechanism', 'key-issuance'})
+
+
+def _priority(url, label, reason, unresolved):
+    """Rank navigation separately from evidence for still-unresolved checks."""
+    if reason == 'public_file':
+        return 2
+    if reason == 'likely_host':
+        return 5
+    path = urlsplit(url).path
+    value = re.sub(r'[-_/]', ' ', f'{path} {label}').lower()
+    if (re.search(r'llms|openapi|swagger|index\.(?:md|txt|json)|\bmcp\b', value)
+            or re.fullmatch(r'/(?:docs|documentation|developers?|reference|api)/?', path)
+            or re.fullmatch(r'(?:api reference|developer documentation|documentation|docs)', label, re.I)
+            or (path == '/' and re.search(r'docs|documentation|developer|reference', label, re.I))):
+        return 0
+    developer = bool(re.search(
+        r'\bapi\b|request|authorization header|bearer|credential|developer|'
+        r'token endpoint|oauth.*(?:client|access)|(?:client|access).*oauth', value))
+    consumer = bool(re.search(
+        r'\buser\b|customer|consumer|identity|verification|\bmfa\b|\b2fa\b|fraud|ebook|marketing', value))
+    issuance = bool(re.search(
+        r'api keys?|credentials?|(?:create|get|generate|obtain|exchange).*token|'
+        r'token.*(?:creation|acquisition|endpoint)|developer.*(?:settings|keys)|'
+        r'(?:dashboard|settings|getting started)', value))
+    if 'key-issuance' in unresolved and issuance and (developer or not consumer):
+        return 3
+    if ('auth-mechanism' in unresolved and developer and
+            re.search(r'auth|bearer|api keys?|credential|oauth|token|secrets?', value)):
+        return 4
+    # General docs may help, but never preempt explicit check-relevant pointers.
+    return 6
 
 
 def discover_surfaces(homepage: FetchObservation,
                       fetch: Callable[[str], FetchObservation],
-                      sufficient: Callable[[DiscoveryResult], bool] | None = None) -> DiscoveryResult:
+                      unresolved_checks: Callable[[DiscoveryResult], frozenset[str]] | None = None) -> DiscoveryResult:
     """Expand seeds, one docs-entry layer, and one index layer; never crawl leaves.
 
     Published pointers preempt guesses. Origins remain restricted to fixed seeds
@@ -151,9 +173,10 @@ def discover_surfaces(homepage: FetchObservation,
         nonlocal sequence
         if url in seen:
             return
-        priority = _priority(url, label or '') if reason == 'published_link' else 4
+        priority = _priority(url, label or '', reason, IMPLEMENTED_CHECKS)
         entry = (priority, sequence, url, reason, source, label, depth)
-        if url not in pending or priority < pending[url][0]:
+        if (url not in pending or priority < pending[url][0]
+                or (reason == 'published_link' and pending[url][3] != 'published_link')):
             pending[url] = entry
             sequence += 1
 
@@ -210,11 +233,17 @@ def discover_surfaces(homepage: FetchObservation,
         enqueue(url, reason)
     add(homepage, 'homepage')
     while pending and len(result.observations) < MAX_FETCHES:
-        # Once published evidence settles all implemented checks, skip guesses.
-        if (sufficient and all(item[3] != 'published_link' for item in pending.values())
-                and sufficient(result)):
+        # Core evaluates pure checks against the current evidence and pending work.
+        result.pending_urls = sorted(pending)
+        unresolved = unresolved_checks(result) if unresolved_checks else IMPLEMENTED_CHECKS
+        def rank(item):
+            _, order, url, reason, _, label, _ = item
+            return (_priority(url, label or '', reason, unresolved), order)
+        item = min(pending.values(), key=rank)
+        # Explicit entry/index/spec/MCP pointers can reveal another surface even
+        # after positive findings. Lower-priority work needs an unresolved check.
+        if not unresolved and rank(item)[0] > 0:
             break
-        item = min(pending.values())
         _, _, url, reason, source, label, depth = item
         pending.pop(url)
         if url not in seen:

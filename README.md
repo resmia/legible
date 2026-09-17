@@ -35,20 +35,28 @@ hosts, and these six files on the input origin: `/llms.txt`, `/openapi.json`,
 `/.well-known/mcp/server-card.json`. Host guesses preserve the scheme and port,
 strip a leading `www.`, and are skipped for IP addresses and single-label hosts.
 
-Discovery prioritizes publisher-provided indexes/specifications, authentication and
-credentials, API references/errors/retry/MCP setup, then general documentation;
-fixed guesses come last. Successful seed HTML and Markdown/text indexes supply
-links. One documentation-entry layer and one index layer may supply follow-ups,
-with a maximum navigation depth of three; terminal pages do not expand.
+Discovery prioritizes explicit documentation entry points and publisher-provided
+indexes/specifications/MCP pointers, then structured file probes. It next selects
+API/request-authentication and credential-acquisition links for unresolved checks,
+followed by host guesses and secondary documentation. Customer-authentication
+marketing does not receive API-authentication priority without developer context.
+Core reevaluates the three pure checks between fetches; discovery uses unresolved
+check IDs to reorder candidates. Checks never fetch.
+Successful seed HTML and Markdown/text indexes supply links. One
+documentation-entry layer and one index layer may supply follow-ups, with a
+maximum navigation depth of three; terminal pages do not expand.
 Relative links use final response URLs. Origins stay restricted to initial origins
 and seed redirect origins. Queries, credentials, non-HTTP(S) URLs and fragments
 are rejected or removed; requested and final URLs are deduplicated.
 
 The maximum is **30 fetch-layer calls**, including the homepage and at most 29
 published links. No guessed hosts or file paths were added. Discovery stops when
-the finite candidate queue is exhausted. Once published follow-ups are examined
-and all three implemented checks are settled positively or not applicable, the
-scan skips remaining guesses. It does not fill unused capacity.
+the finite candidate queue is exhausted. Once all three implemented checks pass
+or are explicitly not applicable, discovery skips remaining secondary links and
+guesses. Explicit entry/index/specification/MCP pointers still receive attention
+because they may expose another integration surface. Unresolved checks can use
+the remaining budget; incomplete evidence is never turned into failure to stop.
+It does not fill unused capacity after checks settle.
 Redirect hops are not separate candidate calls. This is a resource-count cap,
 not a byte or elapsed-time budget. The additive JSON `discovery.pending_urls`
 field records candidates left unexamined when discovery stops, allowing
@@ -64,12 +72,13 @@ excerpt; the index links to unchanged fetch metadata and discovery provenance.
 Markdown renders the same classification and evidence.
 
 Classification performs no network activity. Narrow signals include OpenAPI or
-Swagger JSON document shapes, explicit API reference/REST documentation or REST API prose with HTTP endpoint examples,
+Swagger JSON/YAML document shapes, explicit API reference/REST documentation or
+REST API prose with HTTP endpoint examples,
 MCP server documentation with connection instructions, and SDK/CLI documentation
 with nearby installation commands. This recognizes published material, not its
-validity or runtime behavior. Multiple observed types produce `mixed`. JSON spec
-recognition is deliberately limited; YAML and unrecognized discovery artifacts
-remain uncertain unless documentation supplies a supported signal.
+validity or runtime behavior. Multiple observed types produce `mixed`. Specification
+recognition checks only the version and root info/paths mappings.
+Unrecognized discovery artifacts remain uncertain without a supported signal.
 
 `none` means no software-facing evidence in the bounded examined surface, not
 absence across the whole site. It requires readable homepage content, completed
@@ -79,9 +88,9 @@ material produces `unknown`. Incidental keywords and candidate URLs alone never
 establish a positive type. Positive types do not imply exhaustive coverage.
 
 The three checks are deterministic and make no network requests. OpenAPI recognizes
-JSON document shapes and a narrow YAML subset with root version, info, and paths
-mappings; this is not schema validation. An absence failure requires an established
-REST surface and explicit 404/410 responses at all examined spec candidates,
+JSON and safely parsed YAML with root version, info, and paths
+mappings (using PyYAML); this is not schema validation. An absence failure requires
+an established REST surface and explicit 404/410 responses at all examined spec candidates,
 including the three fixed probes. Unrecognized or unavailable artifacts are unknown.
 Authentication requires explicit machine-authentication prose; login UI and isolated
 keywords are insufficient. Credential issuance separately requires an acquisition
@@ -90,6 +99,9 @@ statements make the authentication checks not applicable. Conflicting statements
 unresolved documentation, and uncertain applicability remain unknown. Negative
 findings describe the bounded examined documentation, not the entire site.
 
-These narrow text rules can miss valid wording, complex YAML, structured security
+Failed speculative hosts remain recorded but do not by themselves describe
+documented evidence as blocked.
+
+These narrow text rules can miss valid wording, structured security
 schemes, and credential paths beyond the existing discovery cap. No later checks,
 authenticated requests, or behavioral validation are implemented.

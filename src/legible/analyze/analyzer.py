@@ -1,9 +1,9 @@
 """Pure, conservative checks over the bounded observations already collected."""
-import json
 import re
 from urllib.parse import urlsplit
 
 from legible.analyze.classification import SurfaceClassification, _text
+from legible.analyze.specification import recognize_spec
 from legible.analyze.models import Finding, FindingEvidence
 from legible.discover.surfaces import DiscoveryResult
 from legible.fix.fixer import remediation
@@ -20,30 +20,7 @@ DESTINATION = re.compile(r'\b(?:dashboard|console|settings|developer portal|toke
 
 
 def _spec(observation):
-    """Recognize document shape only. YAML support is deliberately a narrow subset."""
-    if _text(observation) is None:
-        return None
-    raw = observation.text
-    try:
-        doc = json.loads(raw)
-    except (ValueError, TypeError):
-        doc = None
-    if isinstance(doc, dict):
-        version = doc.get('openapi', doc.get('swagger'))
-        if (isinstance(version, str) and re.fullmatch(
-                r'3\.\d+\.\d+' if 'openapi' in doc else r'2\.0', version)
-                and isinstance(doc.get('info'), dict) and isinstance(doc.get('paths'), dict)):
-            return f'version={version}; info and paths objects present (not schema validation)'
-    # Root keys and indented mappings, never HTML or an embedded fenced example.
-    if '<' in raw or '```' in raw:
-        return None
-    version = re.search(r'^(openapi|swagger):\s*[\"\']?(3\.\d+\.\d+|2\.0)[\"\']?\s*$', raw, re.M)
-    mapping = lambda key: re.search(r'^' + key + r':(?:\s*\{[^\n]*\}|[ \t]*\n[ \t]+\S[^\n]*:)', raw, re.M)
-    if (version and ((version.group(1) == 'openapi' and version.group(2).startswith('3.'))
-                     or (version.group(1) == 'swagger' and version.group(2) == '2.0'))
-            and mapping('info') and mapping('paths')):
-        return f'{version.group(0)}; root info and paths mappings present (not schema validation)'
-    return None
+    return recognize_spec(observation.text) if _text(observation) is not None else None
 
 
 def analyze_surface(discovery: DiscoveryResult, classification: SurfaceClassification) -> list[Finding]:
@@ -70,11 +47,10 @@ def analyze_surface(discovery: DiscoveryResult, classification: SurfaceClassific
         observations[i].status in {404, 410} and any(s.observation_index == i and s.reason == 'likely_host'
                                                    for s in discovery.surfaces)) for i in docs)
     unresolved |= bool(discovery.pending_urls)
+    speculative = {s.observation_index for s in discovery.surfaces if s.reason == 'likely_host'}
     unavailable = any(
         (texts.get(i) is None or BLOCKED.search(texts.get(i) or ''))
-        and not (observations[i].status in {404, 410} and any(
-            s.observation_index == i and s.reason == 'likely_host' for s in discovery.surfaces))
-        for i in docs)
+        for i in docs - speculative)
     unavailable |= bool(observations and texts.get(0) is None)
     unresolved |= bool(observations and texts.get(0) is None)
     statements = [(i, sentence.strip()) for i, t in readable.items()
@@ -132,7 +108,9 @@ def analyze_surface(discovery: DiscoveryResult, classification: SurfaceClassific
     elif unresolved or not readable or any(MECHANISM.search(t) for t in readable.values()):
         state = 'unknown'
         reason = ('Some relevant evidence was unavailable or blocked; coverage is incomplete.' if unavailable
-                  else 'Fetched documentation was examined but authentication evidence remains inconclusive or coverage is incomplete.')
+                  else 'Relevant discovery candidates remain unexamined; authentication evidence is inconclusive.'
+                  if discovery.pending_urls
+                  else 'Fetched documentation was examined but authentication evidence remains inconclusive.')
     else:
         state, reason = 'fail', 'Examined integration documentation does not clearly explain request authentication.'
     results.append(finding('auth-mechanism', 'Authentication mechanism', state, reason, docs, auth + no_auth))

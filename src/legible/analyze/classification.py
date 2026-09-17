@@ -2,10 +2,10 @@
 
 from dataclasses import dataclass
 from html.parser import HTMLParser
-import json
 import re
 from typing import Literal
 
+from legible.analyze.specification import recognize_spec
 from legible.discover.surfaces import DiscoveryResult, MAX_LINKS, initial_candidates
 
 SurfaceType = Literal['rest', 'mcp', 'sdk', 'cli', 'mixed', 'none', 'unknown']
@@ -69,17 +69,8 @@ def _text(observation):
 
 
 def _signals(observation, text):
-    # Recognize a document shape, not specification validity (a later check).
-    try:
-        document = json.loads(observation.text)
-    except (ValueError, TypeError):
-        document = None
-    if isinstance(document, dict):
-        version = document.get('openapi', document.get('swagger'))
-        if (isinstance(version, str) and re.fullmatch(r'(?:3\.\d+\.\d+|2\.0)', version)
-                and isinstance(document.get('info'), dict)
-                and isinstance(document.get('paths'), dict)):
-            yield 'rest', 'api-spec-document', f'version={version}; info and paths objects present'
+    if spec := recognize_spec(observation.text):
+        yield 'rest', 'api-spec-document', spec
     # Keep the two parts close: an unrelated mention elsewhere is insufficient.
     rules = (
         ('rest', r'\b(?:REST(?:ful)? API|API reference|REST documentation)\b',
