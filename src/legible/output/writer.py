@@ -1,7 +1,10 @@
 import json
+from dataclasses import asdict
 from datetime import datetime
 from pathlib import Path
 from urllib.parse import urlparse
+
+from legible.fetch.models import FetchObservation
 
 
 def _make_run_name(url: str) -> str:
@@ -11,14 +14,14 @@ def _make_run_name(url: str) -> str:
 
 
 def _make_markdown_report(
-    url: str,
+    observation: FetchObservation,
     findings: list[str],
     fixes: list[str],
 ) -> str:
     lines = [
         "# Legible Report",
         "",
-        f"URL: {url}",
+        f"URL: {observation.requested_url}",
         "",
         "Product checks are not implemented yet; no assessment was made.",
         "",
@@ -47,21 +50,33 @@ def _make_markdown_report(
     else:
         lines.append("No fixes generated.")
 
+    lines.extend([
+        "",
+        "## Sources examined",
+        "",
+        f"- Requested URL: {observation.requested_url}",
+        f"- Source URL: {observation.final_url or observation.requested_url}",
+        f"- HTTP status: {observation.status if observation.status is not None else 'unavailable'}",
+        f"- Content type: {observation.content_type or 'unavailable'}",
+        f"- Fetch error: {observation.error or 'none'}",
+    ])
+
     return "\n".join(lines) + "\n"
 
 
 def write_results(
-    url: str,
+    observation: FetchObservation,
     findings: list[str],
     fixes: list[str],
     runs_dir: str = "runs",
 ) -> Path:
-    run_name = _make_run_name(url)
+    run_name = _make_run_name(observation.requested_url)
     run_path = Path(runs_dir) / run_name
     run_path.mkdir(parents=True, exist_ok=True)
 
     report = {
-        "url": url,
+        "url": observation.requested_url,
+        "observations": [asdict(observation)],
         "finding_count": len(findings),
         "fix_count": len(fixes),
         "findings": findings,
@@ -77,7 +92,7 @@ def write_results(
     )
 
     markdown_file.write_text(
-        _make_markdown_report(url, findings, fixes),
+        _make_markdown_report(observation, findings, fixes),
         encoding="utf-8",
     )
 

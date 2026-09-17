@@ -1,12 +1,31 @@
 from urllib.error import HTTPError, URLError
 from urllib.request import urlopen
 
+from legible.fetch.models import FetchObservation
 
-def fetch_page(url: str) -> str:
+
+def _observe_response(url: str, response, error: str | None = None) -> FetchObservation:
+    final_url = response.geturl()
+    status = response.status
+    content_type = response.headers.get("Content-Type")
+    text = None
+    try:
+        text = response.read().decode(response.headers.get_content_charset() or "utf-8")
+    except (OSError, UnicodeError, LookupError) as exc:
+        detail = f"Could not read response: {exc}"
+        error = f"{error}; {detail}" if error else detail
+    return FetchObservation(url, final_url, status, content_type, text, error)
+
+
+def fetch_page(url: str) -> FetchObservation:
+    """Fetch once, preserving response evidence and expected failures."""
     try:
         with urlopen(url) as response:
-            return response.read().decode("utf-8")
+            return _observe_response(url, response)
     except HTTPError as exc:
-        raise RuntimeError(f"HTTP error: {exc.code}") from exc
+        with exc:
+            return _observe_response(url, exc, f"HTTP error: {exc.code}")
     except URLError as exc:
-        raise RuntimeError(f"Could not reach URL: {exc.reason}") from exc
+        return FetchObservation(url, error=f"Could not reach URL: {exc.reason}")
+    except OSError as exc:
+        return FetchObservation(url, error=f"Could not reach URL: {exc}")

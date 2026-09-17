@@ -34,9 +34,11 @@ def normalize_target(target: str) -> str:
 
 
 def scan(target: str, runs_dir: str = "runs") -> Path:
-    """Fetch one homepage and preserve the prototype's report format."""
+    """Fetch one homepage and retain its observation in the report."""
     url = normalize_target(target)
-    html = fetch_page(url)
-    findings = analyze_page(html)
+    observation = fetch_page(url)
+    if observation.error is not None:
+        raise RuntimeError(observation.error)
+    findings = analyze_page(observation)
     fixes = create_fixes(findings)
-    return write_results(url, findings, fixes, runs_dir=runs_dir)
+    return write_results(observation, findings, fixes, runs_dir=runs_dir)
