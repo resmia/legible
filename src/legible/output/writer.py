@@ -10,6 +10,44 @@ def _make_run_name(url: str) -> str:
     return f"{timestamp}-{hostname}"
 
 
+def _make_markdown_report(
+    url: str,
+    findings: list[str],
+    fixes: list[str],
+) -> str:
+    lines = [
+        "# Legible Report",
+        "",
+        f"URL: {url}",
+        "",
+        f"Findings: {len(findings)}",
+        f"Fixes: {len(fixes)}",
+        "",
+        "## Findings",
+        "",
+    ]
+
+    if findings:
+        for finding in findings:
+            lines.append(f"- {finding}")
+    else:
+        lines.append("No issues found.")
+
+    lines.extend([
+        "",
+        "## Suggested Fixes",
+        "",
+    ])
+
+    if fixes:
+        for fix in fixes:
+            lines.append(f"- {fix}")
+    else:
+        lines.append("No fixes needed.")
+
+    return "\n".join(lines) + "\n"
+
+
 def write_results(
     url: str,
     findings: list[str],
@@ -28,10 +66,16 @@ def write_results(
         "fixes": fixes,
     }
 
-    report_file = run_path / "report.json"
+    json_file = run_path / "report.json"
+    markdown_file = run_path / "report.md"
 
-    report_file.write_text(
+    json_file.write_text(
         json.dumps(report, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+    markdown_file.write_text(
+        _make_markdown_report(url, findings, fixes),
         encoding="utf-8",
     )
 
