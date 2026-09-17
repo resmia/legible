@@ -3,9 +3,9 @@
 Legible is being built to inspect a domain's public software-facing surface and
 recommend evidence-backed integration improvements. It does not calculate scores.
 
-The current Step 4 scaffold discovers a bounded set of public resources and writes
-`report.json` and `report.md`. Surface classification uses the collected evidence. Product checks are not implemented yet. Empty findings
-do not mean the site passed an assessment.
+Build Step 5 discovers a bounded set of public resources, classifies the surface,
+and assesses `openapi`, `auth-mechanism`, and `key-issuance` using only collected
+observations. It writes `report.json` and `report.md`.
 
 ```sh
 python -m venv .venv
@@ -20,8 +20,10 @@ remains supported. A homepage fetch failure produces a concise error and a nonze
 exit status. Failed secondary probes remain in the report.
 
 Reports retain the prototype's `runs/<timestamp>-<host>/` location and JSON fields:
-`url`, `finding_count`, `fix_count`, `findings`, and `fixes`. Both lists are currently
-empty. An additive `observations` list retains every attempted fetch's
+`url`, `finding_count`, `fix_count`, `findings`, and `fixes`. Findings now contain `id`, `title`, `state`, `source_url`, `evidence`, and `fix`;
+states are `pass`, `fail`, `not_applicable`, and `unknown`. Evidence includes an
+observation index, source URL, HTTP status, content type, error, and excerpt.
+Fixes remain a list of remediation strings for failing or unknown checks. An additive `observations` list retains every attempted fetch's
 `requested_url`, `final_url`, HTTP `status`, `content_type`, `text`, and `error`.
 Markdown shows source URLs, fetch metadata, and discovery provenance. A failed
 homepage fetch still exits without writing reports.
@@ -70,3 +72,19 @@ initial probes, readable responses or explicit 404/410 responses, no ambiguous
 developer hints, and no reached published-link cap. Incomplete or ambiguous
 material produces `unknown`. Incidental keywords and candidate URLs alone never
 establish a positive type. Positive types do not imply exhaustive coverage.
+
+The three checks are deterministic and make no network requests. OpenAPI recognizes
+JSON document shapes and a narrow YAML subset with root version, info, and paths
+mappings; this is not schema validation. An absence failure requires an established
+REST surface and explicit 404/410 responses at all examined spec candidates,
+including the three fixed probes. Unrecognized or unavailable artifacts are unknown.
+Authentication requires explicit machine-authentication prose; login UI and isolated
+keywords are insufficient. Credential issuance separately requires an acquisition
+action and destination for the documented credential. Explicit no-authentication
+statements make the authentication checks not applicable. Conflicting statements,
+unresolved documentation, and uncertain applicability remain unknown. Negative
+findings describe the bounded examined documentation, not the entire site.
+
+These narrow text rules can miss valid wording, complex YAML, structured security
+schemes, and credential paths beyond the existing discovery cap. No later checks,
+new discovery, authenticated requests, or behavioral validation are implemented.

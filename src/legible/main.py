@@ -6,8 +6,8 @@ from legible.core import scan
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        description="Discover bounded public surfaces and write a Legible scaffold report.",
-        epilog="Product checks are not implemented yet. Legacy legible <url> input is also accepted.",
+        description="Discover bounded public surfaces and write a Legible report.",
+        epilog="Checks: openapi, auth-mechanism, key-issuance. Legacy legible <url> input is also accepted.",
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
     scan_parser = subparsers.add_parser("scan", help="scan one domain or HTTP(S) URL")
@@ -23,7 +23,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Error: {exc}", file=sys.stderr)
         return 1
 
-    print("Controlled discovery complete. Product checks are not implemented yet; no assessment was made.")
+    print("Public-surface assessment complete: openapi, auth-mechanism, key-issuance.")
     print(f"Saved JSON report to {run_path / 'report.json'}")
     print(f"Saved Markdown report to {run_path / 'report.md'}")
     return 0

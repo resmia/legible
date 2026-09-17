@@ -114,7 +114,7 @@ def test_scan_reports_classification_without_changing_observations(tmp_path, mon
     assert report['discovery']['surfaces'] == [asdict(s) for s in result.surfaces]
     assert report['classification'] == asdict(classify_surface(result))
     assert report['classification']['detected_types'] == ['mcp', 'rest']
-    assert report['findings'] == report['fixes'] == []
+    assert len(report['findings']) == 3
     markdown = (path / 'report.md').read_text()
     assert 'Surface: mixed' in markdown
     assert 'Observation 0: https://example.com/' in markdown

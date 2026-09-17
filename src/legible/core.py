@@ -1,9 +1,9 @@
-"""Controlled discovery scaffold; product checks come later."""
+"""Orchestrate controlled discovery, classification, and public-surface checks."""
 
 from pathlib import Path
 from urllib.parse import urlsplit, urlunsplit
 
-from legible.analyze.analyzer import analyze_page
+from legible.analyze.analyzer import analyze_surface
 from legible.analyze.classification import classify_surface
 from legible.fetch.page import fetch_page
 from legible.discover.surfaces import discover_surfaces
@@ -42,7 +42,8 @@ def scan(target: str, runs_dir: str = "runs") -> Path:
     if observation.error is not None:
         raise RuntimeError(observation.error)
     discovery = discover_surfaces(observation, fetch_page)
-    findings = analyze_page(observation)
+    classification = classify_surface(discovery)
+    findings = analyze_surface(discovery, classification)
     fixes = create_fixes(findings)
     return write_results(observation, findings, fixes, runs_dir=runs_dir, discovery=discovery,
-                         classification=classify_surface(discovery))
+                         classification=classification)

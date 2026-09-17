@@ -8,34 +8,11 @@ from urllib.error import HTTPError, URLError
 import pytest
 
 from legible import core
-from legible.analyze.analyzer import analyze_page
+from legible.analyze.models import Finding
 from legible.fetch import page
 from legible.fetch.models import FetchObservation
-from legible.fix.fixer import create_fixes
 from legible.main import main
 from legible.output.writer import write_results
-
-
-@pytest.mark.parametrize("html", [
-    '<html><body><img src="photo.jpg"></body></html>',
-    '<html lang="en"><head><title>Hello</title>'
-    '<meta name="description" content="Example"></head>'
-    '<body><h1>Welcome</h1><img src="photo.jpg" alt="Mountain"></body></html>',
-    '<p>API key, OpenAPI, Retry-After, MCP</p>',
-    '',
-])
-def test_scaffold_does_not_make_findings_from_html(html):
-    assert analyze_page(FetchObservation('https://example.com/', text=html)) == []
-
-
-def test_generic_remediation_is_removed():
-    assert create_fixes([
-        'Page is missing a title.',
-        'Page is missing an H1.',
-        'Page is missing a language declaration.',
-        'Page is missing a meta description.',
-        '1 image(s) are missing alt text.',
-    ]) == []
 
 
 @pytest.mark.parametrize(('target', 'expected'), [
@@ -139,17 +116,17 @@ def test_writer_adds_observations_and_renders_sources(tmp_path):
         "text/html", "<p>Evidence</p>", None,
     )
     run_path = write_results(
-        observation, ['Example finding'], ['Example fix'], str(tmp_path),
+        observation, [Finding('example', 'Example finding', 'unknown', observation.final_url, [], 'Example fix')], ['Example fix'], str(tmp_path),
     )
     report = json.loads((run_path / 'report.json').read_text())
     assert report == {
         'url': 'https://example.com/',
         'observations': [asdict(observation)],
         'finding_count': 1, 'fix_count': 1,
-        'findings': ['Example finding'], 'fixes': ['Example fix'],
+        'findings': [asdict(Finding('example', 'Example finding', 'unknown', observation.final_url, [], 'Example fix'))], 'fixes': ['Example fix'],
     }
     markdown = (run_path / 'report.md').read_text()
-    assert '- Example finding' in markdown
+    assert 'Example finding' in markdown
     assert '- Example fix' in markdown
     assert 'Source URL: https://www.example.com/' in markdown
     assert 'HTTP status: 200' in markdown
@@ -176,14 +153,14 @@ def test_cli_writes_both_reports_without_claiming_a_pass(tmp_path, monkeypatch, 
     report = json.loads(report_path.read_text())
     assert report['url'] == 'https://example.com/'
     assert report['observations'][0]['final_url'] == 'https://www.example.com/'
-    assert report['findings'] == report['fixes'] == []
-    assert report['finding_count'] == report['fix_count'] == 0
+    assert len(report['findings']) == 3
+    assert report['finding_count'] == 3
     markdown = report_path.with_suffix('.md').read_text()
-    assert 'no assessment was made' in markdown
+    assert 'Assessed openapi' in markdown
     assert 'No issues found' not in markdown
     assert 'No fixes needed' not in markdown
     output = capsys.readouterr().out
-    assert 'no assessment was made' in output
+    assert 'assessment complete' in output
     assert 'report.json' in output and 'report.md' in output
 
 
@@ -218,13 +195,12 @@ def test_scan_passes_same_observation_to_analysis(tmp_path, monkeypatch):
     observation = FetchObservation('https://example.com/', text='Evidence')
     monkeypatch.setattr(core, 'fetch_page', lambda url: observation)
     seen = []
-    def analyze(value):
+    def analyze(value, classification):
         seen.append(value)
         return []
-    monkeypatch.setattr(core, 'analyze_page', analyze)
+    monkeypatch.setattr(core, 'analyze_surface', analyze)
     core.scan('example.com', str(tmp_path))
-    assert seen == [observation]
-    assert seen[0] is observation
+    assert seen[0].observations[0] is observation
 
 
 def test_response_read_failure_retains_known_source(monkeypatch):

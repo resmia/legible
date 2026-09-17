@@ -4,6 +4,7 @@ from datetime import datetime
 from pathlib import Path
 from urllib.parse import urlparse
 
+from legible.analyze.models import Finding
 from legible.analyze.classification import SurfaceClassification
 from legible.fetch.models import FetchObservation
 from legible.discover.surfaces import DiscoveryResult, MAX_FETCHES, MAX_LINKS
@@ -17,7 +18,7 @@ def _make_run_name(url: str) -> str:
 
 def _make_markdown_report(
     observation: FetchObservation,
-    findings: list[str],
+    findings: list[Finding],
     fixes: list[str],
     discovery: DiscoveryResult | None = None,
     classification: SurfaceClassification | None = None,
@@ -27,7 +28,7 @@ def _make_markdown_report(
         "",
         f"URL: {observation.requested_url}",
         "",
-        "Product checks are not implemented yet; no assessment was made.",
+        "Assessed openapi, auth-mechanism, and key-issuance from public observations.",
         "",
         f"Findings: {len(findings)}",
         f"Fixes: {len(fixes)}",
@@ -46,7 +47,13 @@ def _make_markdown_report(
     lines.extend(["## Findings", ""])
     if findings:
         for finding in findings:
-            lines.append(f"- {finding}")
+            lines.extend([f"### {finding.id}: {finding.state}", "", finding.title, ""])
+            for item in finding.evidence:
+                lines.append(f"- Observation {item.observation_index}: {item.source_url} — "
+                             f"HTTP {item.status}; {item.content_type}; error: {item.error or 'none'}; {item.excerpt}")
+            if finding.fix:
+                lines.extend(["", f"Suggested fix: {finding.fix}"])
+            lines.append("")
     else:
         lines.append("No findings generated.")
 
@@ -89,7 +96,7 @@ def _make_markdown_report(
 
 def write_results(
     observation: FetchObservation,
-    findings: list[str],
+    findings: list[Finding],
     fixes: list[str],
     runs_dir: str = "runs",
     *,
@@ -105,7 +112,7 @@ def write_results(
         "observations": [asdict(item) for item in (discovery.observations if discovery else [observation])],
         "finding_count": len(findings),
         "fix_count": len(fixes),
-        "findings": findings,
+        "findings": [asdict(finding) for finding in findings],
         "fixes": fixes,
     }
 
