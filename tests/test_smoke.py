@@ -164,16 +164,19 @@ def test_cli_writes_both_reports_without_claiming_a_pass(tmp_path, monkeypatch, 
     assert 'report.json' in output and 'report.md' in output
 
 
-def test_cli_fetch_error_is_readable_and_creates_no_report(tmp_path, monkeypatch, capsys):
+def test_cli_fetch_error_is_retained_in_report(tmp_path, monkeypatch, capsys):
     monkeypatch.chdir(tmp_path)
 
     def fail(url):
         return FetchObservation(url, error='Could not reach URL: offline')
 
     monkeypatch.setattr(core, 'fetch_page', fail)
-    assert main(['scan', 'example.com']) == 1
-    assert 'Error: Could not reach URL: offline' in capsys.readouterr().err
-    assert not (tmp_path / 'runs').exists()
+    assert main(['scan', 'example.com']) == 0
+    report_path, = (tmp_path / 'runs').glob('*/report.json')
+    report = json.loads(report_path.read_text())
+    assert len(report['observations']) == 11
+    assert all(f['state'] == 'unknown' for f in report['findings'])
+    assert report['fixes'] == []
 
 
 def test_cli_invalid_input_does_not_fetch(monkeypatch, capsys):

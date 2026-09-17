@@ -5,17 +5,17 @@ from urllib.parse import urlsplit
 
 from legible.analyze.classification import SurfaceClassification, _text
 from legible.analyze.models import Finding, FindingEvidence
-from legible.discover.surfaces import DiscoveryResult, MAX_LINKS
+from legible.discover.surfaces import DiscoveryResult
 from legible.fix.fixer import remediation
 
 SPEC_PATHS = {'/openapi.json', '/openapi.yaml', '/swagger.json'}
 BLOCKED = re.compile(r'access denied|verify you are human|captcha|enable javascript|sign in to continue', re.I)
 NEGATIVE = re.compile(r'\b(?:not|never|unsupported|planned|might|may|could|example only|coming soon)\b', re.I)
-MECHANISM = re.compile(r'\b(?:API[ -]keys?|bearer tokens?|OAuth(?: 2(?:\.0)?)?|signed requests?|HTTP Basic)\b', re.I)
+MECHANISM = re.compile(r'\b(?:API[ -]keys?|bearer tokens?|OAuth(?: 2(?:\.0)?)?|signed requests?|HTTP Basic(?: Auth(?:entication)?)?|mutual TLS|mTLS|HMAC)\b', re.I)
 CONTEXT = re.compile(r'\b(?:API|requests?|SDK|CLI|MCP|server)\b', re.I)
 AUTH_ACTION = re.compile(r'\b(?:authenticate[sd]?|authentication|requires?|uses?|send|include|authorize|authorization)\b', re.I)
 NO_AUTH = re.compile(r'\b(?:API|requests?|SDK|CLI|MCP server)\b[^.!?]{0,100}\b(?:requires? no authentication|does not require (?:authentication|credentials)|no (?:authentication|credentials) (?:is|are) required)\b', re.I)
-ACQUIRE = re.compile(r'\b(?:create|generate|obtain|get|issue|request|copy|exchange|register)\b', re.I)
+ACQUIRE = re.compile(r'\b(?:create|generate|obtain|get|issue|request|copy|exchange|register|find|view|retrieve)\b', re.I)
 DESTINATION = re.compile(r'\b(?:dashboard|console|settings|developer portal|token endpoint|authorization endpoint|administrator|support|account)\b|https?://', re.I)
 
 
@@ -64,15 +64,22 @@ def analyze_surface(discovery: DiscoveryResult, classification: SurfaceClassific
                 and (observations[i].content_type or '').split(';')[0] in
                 {'text/html', 'application/xhtml+xml', 'text/plain', 'text/markdown'}}
     readable = {i: t for i, t in readable.items() if len(t.split()) >= 4 and re.search(
-        r'REST(?:ful)? API|API reference|authentication|authenticate|API requests?|SDK|CLI|MCP server', t, re.I)
+        r'REST(?:ful)? API|API reference|authentication|authenticate|API[ -]keys?|bearer|OAuth|HTTP Basic|credentials?|API requests?|SDK|CLI|MCP server', t, re.I)
         and not re.fullmatch(r'(?:login|log in|sign in|sign up|signup|\s)+', t, re.I)}
     unresolved = any(i not in readable and not (
         observations[i].status in {404, 410} and any(s.observation_index == i and s.reason == 'likely_host'
                                                    for s in discovery.surfaces)) for i in docs)
-    unresolved |= sum(s.reason == 'published_link' for s in discovery.surfaces) >= MAX_LINKS
+    unresolved |= bool(discovery.pending_urls)
+    unavailable = any(
+        (texts.get(i) is None or BLOCKED.search(texts.get(i) or ''))
+        and not (observations[i].status in {404, 410} and any(
+            s.observation_index == i and s.reason == 'likely_host' for s in discovery.surfaces))
+        for i in docs)
+    unavailable |= bool(observations and texts.get(0) is None)
+    unresolved |= bool(observations and texts.get(0) is None)
     statements = [(i, sentence.strip()) for i, t in readable.items()
                   for sentence in re.split(r'(?<=[.!?])\s+', t)]
-    auth = [(i, s) for i, s in statements if MECHANISM.search(s) and CONTEXT.search(s)
+    auth = [(i, s) for i, s in statements if MECHANISM.search(s) and (CONTEXT.search(s) or re.search(r'HTTP Basic|bearer|OAuth|mTLS|mutual TLS|HMAC', s, re.I))
             and AUTH_ACTION.search(s) and not NEGATIVE.search(s)]
     no_auth = [(i, s) for i, s in statements if NO_AUTH.search(s)]
     issuance = [(i, s) for i, s in statements if MECHANISM.search(s) and ACQUIRE.search(s)
@@ -88,7 +95,7 @@ def analyze_surface(discovery: DiscoveryResult, classification: SurfaceClassific
             excerpts[index] = (excerpts.get(index, '') + ' ' + excerpt).strip()
         evidence = [FindingEvidence(i, observations[i].final_url or observations[i].requested_url,
                     observations[i].status, observations[i].content_type, observations[i].error,
-                    excerpts.get(i, (texts.get(i) or observations[i].error or 'No readable body')[:300]))
+                    excerpts.get(i, (texts.get(i) or 'No readable body')[:300]))
                     for i in sorted(indices)]
         # Classification is itself backed by the same stored observations.
         evidence = evidence or [FindingEvidence(e.observation_index, e.source_url,
@@ -106,7 +113,8 @@ def analyze_surface(discovery: DiscoveryResult, classification: SurfaceClassific
     elif 'rest' not in classification.detected_types:
         state, reason = 'unknown', 'REST applicability is unresolved.'
     elif (SPEC_PATHS <= {urlsplit(observations[i].requested_url).path for i in spec_indices}
-          and all(observations[i].status in {404, 410} for i in spec_indices)):
+          and all(observations[i].status in {404, 410} for i in spec_indices)
+          and not discovery.pending_urls and texts.get(0) is not None):
         state, reason = 'fail', 'Examined spec locations returned 404/410; no specification found in this bounded scan.'
     else:
         state, reason = 'unknown', 'Spec coverage is incomplete or responses are unreadable, ambiguous, or unrecognized.'
@@ -117,12 +125,14 @@ def analyze_surface(discovery: DiscoveryResult, classification: SurfaceClassific
         state, reason = 'unknown', 'Authentication statements conflict or have different scopes.'
     elif no_auth:
         state, reason = 'not_applicable', 'Documentation explicitly says authentication is unnecessary.'
-    elif not known:
-        state, reason = 'unknown', 'Integration applicability is unresolved.'
     elif auth:
         state, reason = 'pass', 'Public documentation describes request authentication.'
+    elif not known:
+        state, reason = 'unknown', 'Integration applicability is unresolved.'
     elif unresolved or not readable or any(MECHANISM.search(t) for t in readable.values()):
-        state, reason = 'unknown', 'Relevant documentation could not be reliably examined.'
+        state = 'unknown'
+        reason = ('Some relevant evidence was unavailable or blocked; coverage is incomplete.' if unavailable
+                  else 'Fetched documentation was examined but authentication evidence remains inconclusive or coverage is incomplete.')
     else:
         state, reason = 'fail', 'Examined integration documentation does not clearly explain request authentication.'
     results.append(finding('auth-mechanism', 'Authentication mechanism', state, reason, docs, auth + no_auth))

@@ -82,7 +82,8 @@ def _signals(observation, text):
             yield 'rest', 'api-spec-document', f'version={version}; info and paths objects present'
     # Keep the two parts close: an unrelated mention elsewhere is insufficient.
     rules = (
-        ('rest', r'\bREST(?:ful)? API\b', ENDPOINT),
+        ('rest', r'\b(?:REST(?:ful)? API|API reference|REST documentation)\b',
+         re.compile(r'API reference|REST documentation|REST(?:ful)? API (?:reference|documentation)|' + ENDPOINT.pattern, re.I)),
         ('mcp', r'\b(?:MCP|Model Context Protocol) server\b',
          re.compile(r'\b(?:connect|configure|connection|endpoint|mcpServers)\b', re.I)),
         ('sdk', r'\b(?:SDK|software development kit)\b', INSTALL),

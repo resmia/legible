@@ -80,8 +80,8 @@ def test_deterministic_global_link_and_fetch_caps():
     again, again_calls = discover(home)
     assert calls == again_calls
     assert result == again
-    assert len(result.observations) == MAX_FETCHES == 19
-    assert calls[-MAX_LINKS:] == [f'{HOME}api/{i}' for i in range(8)]
+    assert len(result.observations) == MAX_FETCHES == 30
+    assert calls == [f'{HOME}api/{i}' for i in range(29)]
 
 
 @pytest.mark.parametrize('link', [
@@ -133,7 +133,7 @@ def test_scan_serializes_all_evidence_and_provenance(tmp_path, monkeypatch):
     assert len(report['observations']) == 12
     for surface in report['discovery']['surfaces']:
         assert report['observations'][surface['observation_index']]['requested_url'] == surface['url']
-    linked = report['discovery']['surfaces'][-1]
+    linked = next(s for s in report['discovery']['surfaces'] if s['reason'] == 'published_link')
     assert linked['source_url'] == HOME
     assert linked['reason'] == 'published_link'
     markdown = (path / 'report.md').read_text()

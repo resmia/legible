@@ -39,9 +39,11 @@ def scan(target: str, runs_dir: str = "runs") -> Path:
     """Discover bounded public resources and retain their observations."""
     url = normalize_target(target)
     observation = fetch_page(url)
-    if observation.error is not None:
-        raise RuntimeError(observation.error)
-    discovery = discover_surfaces(observation, fetch_page)
+    def sufficient(discovery):
+        findings = analyze_surface(discovery, classify_surface(discovery))
+        return bool(findings) and all(f.state in {'pass', 'not_applicable'} for f in findings)
+
+    discovery = discover_surfaces(observation, fetch_page, sufficient=sufficient)
     classification = classify_surface(discovery)
     findings = analyze_surface(discovery, classification)
     fixes = create_fixes(findings)

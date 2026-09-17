@@ -16,17 +16,16 @@ python -m venv .venv
 
 A domain defaults to HTTPS. HTTP(S) URLs are accepted and normalized to their
 homepage, dropping paths, queries, and fragments. Legacy `legible <url>` input
-remains supported. A homepage fetch failure produces a concise error and a nonzero
-exit status. Failed secondary probes remain in the report.
+remains supported. Homepage failures remain observations; bounded discovery continues and reports
+preserve uncertainty. Invalid input still produces a nonzero exit status.
 
 Reports retain the prototype's `runs/<timestamp>-<host>/` location and JSON fields:
 `url`, `finding_count`, `fix_count`, `findings`, and `fixes`. Findings now contain `id`, `title`, `state`, `source_url`, `evidence`, and `fix`;
 states are `pass`, `fail`, `not_applicable`, and `unknown`. Evidence includes an
 observation index, source URL, HTTP status, content type, error, and excerpt.
-Fixes remain a list of remediation strings for failing or unknown checks. An additive `observations` list retains every attempted fetch's
+Fixes remain a list of remediation strings for failing checks only. An additive `observations` list retains every attempted fetch's
 `requested_url`, `final_url`, HTTP `status`, `content_type`, `text`, and `error`.
-Markdown shows source URLs, fetch metadata, and discovery provenance. A failed
-homepage fetch still exits without writing reports.
+Markdown shows source URLs, fetch metadata, and discovery provenance. Unknown findings describe evidence limits without prescribing defect remediation.
 Unavailable observation fields are null; an observed empty body is an empty string.
 The full v1 report schema is deferred. Generated reports are local-only.
 
@@ -36,18 +35,24 @@ hosts, and these six files on the input origin: `/llms.txt`, `/openapi.json`,
 `/.well-known/mcp/server-card.json`. Host guesses preserve the scheme and port,
 strip a leading `www.`, and are skipped for IP addresses and single-label hosts.
 
-Successful HTML from those initial resources supplies up to eight relevant
-anchor links in page/document order: docs, API, authentication, errors, rate
-limits, retries, MCP, agent setup, OpenAPI, or Swagger. Relative links use the
-response's final URL. Links must stay on an initial origin or an observed initial
-redirect origin. Credentials, query strings, non-HTTP(S) URLs, and fragment-only
-links are skipped. URLs are deduplicated with fragments removed. Linked responses
-are never used to discover more links; no sitemaps or text-file links are crawled.
+Discovery prioritizes publisher-provided indexes/specifications, authentication and
+credentials, API references/errors/retry/MCP setup, then general documentation;
+fixed guesses come last. Successful seed HTML and Markdown/text indexes supply
+links. One documentation-entry layer and one index layer may supply follow-ups,
+with a maximum navigation depth of three; terminal pages do not expand.
+Relative links use final response URLs. Origins stay restricted to initial origins
+and seed redirect origins. Queries, credentials, non-HTTP(S) URLs and fragments
+are rejected or removed; requested and final URLs are deduplicated.
 
-The maximum is **19 fetch-layer calls**: 11 initial resources plus 8 linked
-resources. Redirect hops use the existing fetch layer and are not separate
-candidate calls. This is a resource-count cap, not a byte or elapsed-time budget.
-The additive JSON `discovery` object records these caps and a `surfaces` list.
+The maximum is **30 fetch-layer calls**, including the homepage and at most 29
+published links. No guessed hosts or file paths were added. Discovery stops when
+the finite candidate queue is exhausted. Once published follow-ups are examined
+and all three implemented checks are settled positively or not applicable, the
+scan skips remaining guesses. It does not fill unused capacity.
+Redirect hops are not separate candidate calls. This is a resource-count cap,
+not a byte or elapsed-time budget. The additive JSON `discovery.pending_urls`
+field records candidates left unexamined when discovery stops, allowing
+checks to preserve uncertainty. The discovery object also records caps and surfaces.
 Each entry records `url`, `reason` (`homepage`, `likely_host`, `public_file`, or
 `published_link`), `source_url`, `link_text`, and an `observation_index` into
 `observations`. These are attempted candidates, not verified capabilities.
@@ -59,7 +64,7 @@ excerpt; the index links to unchanged fetch metadata and discovery provenance.
 Markdown renders the same classification and evidence.
 
 Classification performs no network activity. Narrow signals include OpenAPI or
-Swagger JSON document shapes, REST API documentation with HTTP endpoint examples,
+Swagger JSON document shapes, explicit API reference/REST documentation or REST API prose with HTTP endpoint examples,
 MCP server documentation with connection instructions, and SDK/CLI documentation
 with nearby installation commands. This recognizes published material, not its
 validity or runtime behavior. Multiple observed types produce `mixed`. JSON spec
@@ -87,4 +92,4 @@ findings describe the bounded examined documentation, not the entire site.
 
 These narrow text rules can miss valid wording, complex YAML, structured security
 schemes, and credential paths beyond the existing discovery cap. No later checks,
-new discovery, authenticated requests, or behavioral validation are implemented.
+authenticated requests, or behavioral validation are implemented.

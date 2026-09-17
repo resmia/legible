@@ -74,7 +74,7 @@ def _make_markdown_report(
     if discovery:
         lines.extend([
             f"Discovery caps: {MAX_FETCHES} fetches, including at most {MAX_LINKS} published links.",
-            "Candidates are not validated capabilities. Linked pages are not crawled.", "",
+            "Candidates are not validated capabilities. Only bounded documentation-entry and index follow-ups are expanded.", "",
         ])
     for index, source in enumerate(observations):
         lines.extend([
@@ -123,6 +123,7 @@ def write_results(
         report["discovery"] = {
             "max_fetches": MAX_FETCHES,
             "max_linked_fetches": MAX_LINKS,
+            "pending_urls": discovery.pending_urls,
             "surfaces": [asdict(surface) for surface in discovery.surfaces],
         }
 
