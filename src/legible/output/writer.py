@@ -10,6 +10,15 @@ from legible.fetch.models import FetchObservation
 from legible.discover.surfaces import DiscoveryResult, MAX_FETCHES, MAX_LINKS
 
 
+def _observation_dict(observation):
+    result = asdict(observation)
+    if result['metadata'] is None:
+        del result['metadata']
+    else:
+        result['canonical_url'] = observation.canonical_url
+    return result
+
+
 def _make_run_name(url: str) -> str:
     hostname = urlparse(url).hostname or "unknown"
     timestamp = datetime.now().strftime("%Y-%m-%d-%H%M%S")
@@ -109,7 +118,7 @@ def write_results(
 
     report = {
         "url": observation.requested_url,
-        "observations": [asdict(item) for item in (discovery.observations if discovery else [observation])],
+        "observations": [_observation_dict(item) for item in (discovery.observations if discovery else [observation])],
         "finding_count": len(findings),
         "fix_count": len(fixes),
         "findings": [asdict(finding) for finding in findings],

@@ -6,13 +6,13 @@ from urllib.parse import urlsplit, urljoin
 import yaml
 
 from legible.analyze.classification import _text
+from legible.analyze.mcp import mcp_evidence
 from legible.analyze.specification import recognize_spec
 
 ERROR = re.compile(r'\berrors?\b|\b[45]\d\d\b|failure', re.I)
 RETRY = re.compile(r'retr(?:y|ies)|backoff|rate.limit|throttl|\b429\b|idempotenc', re.I)
 MCP = re.compile(r'\bMCP\b|Model Context Protocol', re.I)
 FIELDS = {'code', 'type', 'error', 'error_code', 'request_id', 'parameter'}
-BLOCKED = re.compile(r'access denied|verify you are human|captcha|enable javascript|sign in to continue', re.I)
 
 
 def _document(raw):
@@ -64,6 +64,9 @@ def _spec_errors(raw):
 
 
 def _structured(text):
+    sdk = re.search(r'(?:SDK errors?|except \w*Error|catch\s*\([^)]*Error).{0,240}\b\w+\.(?:code|type|error_code)\s*={2,3}\s*["\'][\w.-]+["\'].{0,160}', text, re.I)
+    if sdk and not re.search(r'planned|example only|not returned', sdk[0], re.I):
+        return sdk[0]
     # Require an error context adjacent to an actual JSON object, not exception code.
     decoder = json.JSONDecoder()
     for match in re.finditer(r'\{', text):
@@ -91,8 +94,8 @@ def _structured(text):
 def _rendered_error_model(text):
     """Require local field definitions and stable identifiers, not page keywords."""
     for anchor in re.finditer(r'\berrors?\b', text, re.I):
-        section = text[anchor.start():anchor.end()+1200]
-        if not re.search(r'\berror (?:object|response|types?|codes?)\b|\btype of error\b', section, re.I):
+        section = text[anchor.start():anchor.end()+2400]
+        if not re.search(r'\berror (?:object|response|types?|codes?)\b|\btype of error\b|errors? attributes', section, re.I):
             continue
         if re.search(r'planned|example only|not returned|coming soon|catch\s*\(|except\b|throw\s', section, re.I):
             continue
@@ -100,15 +103,16 @@ def _rendered_error_model(text):
         # plus semantics or enumerated identifiers within the same small region.
         identifier = re.search(r'\b(?:code|error_code|type)\b[`\s|:*–-]*(?:nullable\s+)?(?:string|enum)\b', section, re.I)
         named = re.findall(r'\b[a-z][a-z0-9]*_(?:[a-z0-9]+_)*[a-z0-9]+\b', section)
-        stable = re.search(r'\b(?:stable|machine.readable|identif(?:ier|ies)|one of|possible values|enum|category|categories)\b', section, re.I)
-        members = re.search(r'\bmessage\b[`\s|:*–-]*string\b', section, re.I)
+        stable = re.search(r'\b(?:stable|machine.readable|identif(?:ier|ies|ying)|one of|possible values|enum|category|categories)\b', section, re.I)
+        members = re.search(r'\bmessage\b[`\s|:*–-]*(?:nullable\s+)?string\b', section, re.I)
         companion = re.search(r'\b(?:param|parameter|request_id)\b[`\s|:*–-]*(?:string|nullable)\b', section, re.I)
         named_types = re.search(r'\berror (?:types|codes)\s+(?:are|include|can be|one of)\b', section, re.I)
         enum_list = re.search(
             r'(?:one of|possible values\s*:|error (?:types|codes) (?:are|include))\s+'
             r'[`\"\']?[a-z][\w-]*[`\"\']?\s*(?:,|\band\b)\s*[`\"\']?[a-z][\w-]*', section, re.I)
         categories = len(set(named)) >= 2 or enum_list
-        if (identifier and stable and (members and companion or categories)
+        status_codes = re.search(r'error codes?.{0,120}(?:status|HTTP|meaning)', section, re.I) and re.search(r'[a-z]+_[a-z_]+\s*[|:]\s*[45]\d\d\s*[|:]\s*\w+', section)
+        if (status_codes or identifier and stable and (members and companion or categories)
                 or named_types and categories):
             return section
     return None
@@ -124,37 +128,19 @@ def _retry(text):
                 or re.search(r'idempotenc', sentence, re.I) and re.search(r'retr(?:y|ies)', sentence, re.I) and re.search(r'safe|same|reuse|prevent', sentence, re.I)
                 or re.search(r'retr(?:y|ies)', sentence, re.I) and re.search(r'\b(?:429|5\d\d|timeout|transient)\b', sentence, re.I) and re.search(r'wait|backoff|after|automatically|retryable|should retry', sentence, re.I)):
             return sentence
-    return None
-
-
-def _http_url(value):
-    if not isinstance(value, str) or re.search(r'[<>\s{}]', value):
-        return False
-    try:
-        parsed = urlsplit(value)
-        return parsed.scheme in {'http', 'https'} and bool(parsed.hostname) and parsed.username is None
-    except ValueError:
-        return False
-
-
-def _connection(text):
-    if not MCP.search(text):
-        return None
-    for match in MCP.finditer(text):
-        excerpt = text[max(0, match.start()-100):match.end()+500]
-        if re.search(r'coming soon|planned|example only|not available', excerpt, re.I):
+    for match in re.finditer(r'\b(?:[45]\d\d|connection (?:failure|error)|timeout)\b', text, re.I):
+        section = text[max(0, match.start()-80):match.end()+600]
+        if re.search(r'planned|coming soon|example only', section, re.I):
             continue
-        if (re.search(r'connect|endpoint|server URL|mcpServers|configure', excerpt, re.I)
-                and any(_http_url(url) for url in re.findall(r'https?://[^\s<>"`]+', excerpt))):
-            return excerpt
-        if re.search(r'\b(?:npx|uvx)\s+[\w@./-]+', excerpt) and re.search(r'configure|connect|command|run', excerpt, re.I):
-            return excerpt
+        if (re.search(r'retryable|safe to retry', section, re.I)
+                and re.search(r'backoff|wait|delay|fix.{0,80}request|non.retryable|do not retry', section, re.I)):
+            return section
     return None
 
 
 def remaining_checks(discovery, classification, finding):
     observations = discovery.observations
-    texts = {i: t for i, o in enumerate(observations) if (t := _text(o)) and not BLOCKED.search(t)}
+    texts = {i: t for i, o in enumerate(observations) if (t := _text(o))}
     types = set(classification.detected_types)
     known = bool(types)
     complete = not discovery.pending_urls and bool(texts.get(0))
@@ -176,7 +162,10 @@ def remaining_checks(discovery, classification, finding):
         if (o.content_type or '').split(';')[0] not in {'text/plain', 'text/markdown'}:
             continue
         links = re.findall(r'\[([^]\n]+)\]\((https?://[^\s)]+|/[^\s)]*)\)', o.text)
-        if any(re.search(r'docs|documentation|API|reference|auth|SDK|MCP|guide|quickstart|error', label, re.I) for label, _ in links):
+        instructions = (re.search(r'API base URL|API routes|bearer|API key|setup|canonical.*(?:contract|reference)', o.text, re.I)
+                        and re.search(r'https?://|GET /|POST /', o.text)
+                        and len(o.text.split()) >= 8)
+        if instructions or any(re.search(r'docs|documentation|API|reference|auth|SDK|MCP|guide|quickstart|error', label, re.I) for label, _ in links):
             usable.append((i, o.text[:700]))
     attempted = {u for o in observations for u in (o.requested_url, o.final_url) if u}
     docs_origins = {urljoin(o.final_url or o.requested_url, '/llms.txt')
@@ -224,27 +213,19 @@ def remaining_checks(discovery, classification, finding):
             state, reason = 'unknown', 'Relevant documentation coverage or applicability remains incomplete or ambiguous.'
         results.append(finding(id, title, state, reason, context, matches or examined))
 
-    connections = [(i, match) for i, t in texts.items() if (match := _connection(t))]
+    providers, connections = [], []
     mcp_indices = {i for i, t in texts.items() if MCP.search(t)}
     ambiguous_mcp_artifact = False
     for i, t in texts.items():
-        doc = _document(observations[i].text) if (observations[i].content_type or '').startswith('application/json') else None
-        path = urlsplit(observations[i].requested_url).path
-        if 'mcp' in path and 'server-card' in path:
+        o = observations[i]
+        provider, connection = mcp_evidence(t, o.text, o.final_url or o.requested_url)
+        if provider:
+            providers.append((i, provider))
+        if connection:
+            connections.append((i, connection))
+        if 'server-card' in o.requested_url and not connection:
             ambiguous_mcp_artifact = True
-        if isinstance(doc, dict) and ('mcpServers' in doc or 'mcp' in path and ('server-card' in path or 'server/card' in path)):
-            if doc.get('name') and isinstance(doc.get('transport'), dict) and _http_url(doc['transport'].get('url')):
-                connections.append((i, t[:700]))
-                mcp_indices.add(i)
-            elif isinstance(doc.get('mcpServers'), dict):
-                for config in doc['mcpServers'].values():
-                    if isinstance(config, dict) and (_http_url(config.get('url')) or config.get('command') and isinstance(config.get('args'), list)):
-                        connections.append((i, t[:700]))
-                        mcp_indices.add(i)
-    established = 'mcp' in types or bool(connections) or any(
-        re.search(r'\b(?:our|the|this) (?:MCP|Model Context Protocol) server\b', t, re.I)
-        and not re.search(r'planned|coming soon|not available|no MCP server', t, re.I)
-        for t in texts.values())
+    established = 'mcp' in types or bool(providers)
     if established and connections:
         state, reason = 'pass', 'Public MCP connection instructions or metadata identify a connection path.'
     elif not established:

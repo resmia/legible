@@ -110,7 +110,8 @@ def test_scan_reports_classification_without_changing_observations(tmp_path, mon
     path = core.scan(HOME, str(tmp_path))
     report = json.loads((path / 'report.json').read_text())
     assert calls == list(by_url)
-    assert report['observations'] == [asdict(o) for o in result.observations]
+    assert all(o.metadata is None for o in result.observations)
+    assert report['observations'] == [{k: v for k, v in asdict(o).items() if k != 'metadata'} for o in result.observations]
     assert report['discovery']['surfaces'] == [asdict(s) for s in result.surfaces]
     assert report['classification'] == asdict(classify_surface(result))
     assert report['classification']['detected_types'] == ['mcp', 'rest']

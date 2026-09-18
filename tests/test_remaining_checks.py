@@ -207,7 +207,7 @@ def run_scan(monkeypatch, output, unresolved=False):
         retry = next(f for f in report['findings'] if f['id'] == 'retry-guidance')
         assert retry['state'] == 'unknown' and retry['fix'] is None
     else:
-        assert len(calls) == 10
+        assert len(calls) == 6  # Check-specific evidence precedes speculative probes.
         assert report['classification']['kind'] == 'mixed'
         assert all(f['state'] == 'pass' for f in report['findings'])
         assert report['fixes'] == []

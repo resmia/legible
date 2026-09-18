@@ -1,11 +1,11 @@
 """Conservative surface interpretation of existing discovery evidence only."""
 
 from dataclasses import dataclass
-from html.parser import HTMLParser
 import re
 from typing import Literal
 
 from legible.analyze.specification import recognize_spec
+from legible.analyze.mcp import mcp_evidence
 from legible.discover.surfaces import DiscoveryResult, MAX_LINKS, initial_candidates
 
 SurfaceType = Literal['rest', 'mcp', 'sdk', 'cli', 'mixed', 'none', 'unknown']
@@ -27,25 +27,6 @@ class SurfaceClassification:
     evidence: list[ClassificationEvidence]
 
 
-class _VisibleText(HTMLParser):
-    def __init__(self):
-        super().__init__(convert_charrefs=True)
-        self.hidden = 0
-        self.parts = []
-
-    def handle_starttag(self, tag, attrs):
-        if tag in {'script', 'style', 'template'}:
-            self.hidden += 1
-
-    def handle_endtag(self, tag):
-        if tag in {'script', 'style', 'template'} and self.hidden:
-            self.hidden -= 1
-
-    def handle_data(self, data):
-        if not self.hidden:
-            self.parts.append(data)
-
-
 HINT = re.compile(r'\b(?:api|rest|openapi|swagger|mcp|sdk|cli|developer|developers|'
                   r'documentation|docs|integration|authentication|oauth|agent setup|'
                   r'command.line|software development kit)\b', re.I)
@@ -54,29 +35,25 @@ INSTALL = re.compile(r'\b(?:pip(?:3)? install|npm install|npm i|yarn add|pnpm ad
 
 
 def _text(observation):
-    if (observation.error is not None or observation.status is None
-            or not 200 <= observation.status < 300 or not observation.text):
-        return None
-    media = (observation.content_type or '').split(';', 1)[0].strip().lower()
-    if media in {'text/html', 'application/xhtml+xml'}:
-        parser = _VisibleText()
-        parser.feed(observation.text)
-        return ' '.join(' '.join(parser.parts).split()) or None
-    if media in {'text/plain', 'text/markdown', 'application/json', 'application/yaml',
-                 'text/yaml', 'application/x-yaml'}:
-        return ' '.join(observation.text.split()) or None
-    return None
+    return observation.document.text if observation.availability == 'available' else None
 
 
 def _signals(observation, text):
     if spec := recognize_spec(observation.text):
         yield 'rest', 'api-spec-document', spec
+    provider, _ = mcp_evidence(text, observation.text, observation.final_url or observation.requested_url)
+    if provider:
+        yield 'mcp', 'mcp-documentation', provider
+    base = re.search(r'\b(?:REST API|API) base URLs?\s*[:=]?\s*https?://[^\s]+', text, re.I)
+    if base and re.search(r'authentication|bearer|API key|GET |POST |API routes', text, re.I):
+        yield 'rest', 'rest-documentation', text[max(0, base.start()-30):base.end()+200]
+    cli = re.search(r'\b(?:self.hosted CLI|command.line (?:interface|tool)|CLI)\b.{0,200}\b(?:run|install|execute|usage)\b.{0,80}', text, re.I)
+    if cli and not re.search(r'planned|coming soon|not supported', cli[0], re.I):
+        yield 'cli', 'cli-documentation', cli[0]
     # Keep the two parts close: an unrelated mention elsewhere is insufficient.
     rules = (
         ('rest', r'\b(?:REST(?:ful)? API|API reference|REST documentation)\b',
          re.compile(r'API reference|REST documentation|REST(?:ful)? API (?:reference|documentation)|' + ENDPOINT.pattern, re.I)),
-        ('mcp', r'\b(?:MCP|Model Context Protocol) server\b',
-         re.compile(r'\b(?:connect|configure|connection|endpoint|mcpServers)\b', re.I)),
         ('sdk', r'\b(?:SDK|software development kit)\b', INSTALL),
         ('cli', r'\b(?:CLI|command.line (?:interface|tool))\b', INSTALL),
     )

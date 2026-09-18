@@ -4,7 +4,8 @@ import re
 from urllib.parse import urlsplit
 
 from legible.analyze.specification import recognize_spec
-from legible.analyze.remaining import _structured
+from legible.analyze.remaining import _structured, _retry
+from legible.analyze.classification import _text
 
 EXCERPT_LIMIT = 420
 TOPICS = {
@@ -46,6 +47,13 @@ def select_evidence(finding, report):
     topic, direct = TOPICS[finding.id], DIRECT[finding.id]
     ranked = []
     for item in finding.evidence:
+        observation = report.discovery.observations[item.observation_index]
+        full_text = _text(observation) or ''
+        # Recover decisive fetched passages that were outside a generic excerpt.
+        decisive = (_structured(full_text) if finding.id == 'typed-errors' else
+                    _retry(full_text) if finding.id == 'retry-guidance' else None)
+        if decisive and finding.state == 'pass':
+            item = replace(item, excerpt=decisive)
         surface = next((s for s in report.discovery.surfaces
                         if s.observation_index == item.observation_index), None)
         location = urlsplit(item.source_url).path
@@ -76,10 +84,13 @@ def select_evidence(finding, report):
     threshold = ranked[0][0] if ranked and ranked[0][0] >= 4 else 1
     selected, seen = [], set()
     for strength, item in ranked:
-        if strength < threshold or item.source_url in seen:
+        canonical = re.sub(r'\.(?:md|html)$', '', item.source_url).rstrip('/')
+        fingerprint = (canonical, ' '.join(item.excerpt.split()))
+        if strength < threshold or item.source_url in seen or fingerprint in seen:
             continue
         selected.append(replace(item, excerpt=concise_excerpt(item.excerpt, direct)))
         seen.add(item.source_url)
+        seen.add(fingerprint)
         if len(selected) == (3 if finding.state == 'unknown' else 2):
             break
     return selected

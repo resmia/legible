@@ -64,12 +64,12 @@ def test_entry_and_assets():
 def test_group_states_evidence_and_surfaces(report):
     page = render_page('token', report, 'widget.example')
     for label in ['Discover', 'Access', 'Recover', 'Clear', 'Needs attention', 'Could not verify',
-                  'Not applicable', 'REST API · MCP', 'Sources examined', 'Rescan',
+                  'Not applicable', 'REST API · MCP', 'Sources examined', 'Scan another domain',
                   'https://widget.example/docs', 'Use header X-Widget-Key.', 'Linked from']:
         assert label in page
     for finding in report.findings:
         card = page.split(f'id="{finding.id}"', 1)[1].split('</details>', 1)[0]
-        assert ('How to fix' in card) == (finding.state == 'fail')
+        assert ('Recommended fix' in card) == (finding.state == 'fail')
     assert '<details class="sources">' in page
     assert '<details class="finding pass"' in page  # Compact by default.
 
@@ -77,7 +77,7 @@ def test_group_states_evidence_and_surfaces(report):
 def test_unknown_never_displays_remediation_even_if_supplied(report):
     unknown = replace(report.findings[0], state='unknown', fix='UNSUPPORTED REMEDY')
     page = render_page('token', replace(report, findings=[unknown]))
-    assert 'UNSUPPORTED REMEDY' not in page and 'How to fix' not in page
+    assert 'UNSUPPORTED REMEDY' not in page and 'Recommended fix' not in page
 
 
 @pytest.mark.parametrize(('kind', 'types', 'expected'), [
@@ -161,3 +161,118 @@ def test_shared_result_preserves_cli_serialization(monkeypatch, tmp_path, report
     assert saved['findings'][0]['id'] == report.findings[0].id
     assert saved['classification']['detected_types'] == ['rest', 'mcp']
     assert (path / 'report.md').is_file()
+
+
+def test_landing_and_compact_result_states(report):
+    landing = render_page('token')
+    assert '<section class="intro">' in landing
+    assert 'id="scan-form" action="/scan" method="post" >' in landing
+    assert 'id="scan-another"' not in landing
+    result = render_page('token', report, 'widget.example')
+    assert '<section class="intro">' not in result
+    assert 'See your product the way software sees it.' not in result
+    assert 'aria-controls="scan-form" aria-expanded="false"' in result
+    assert 'hidden class="compact-form"' in result
+    assert 'value="widget.example"' in result
+    assert 'class="counts"' not in result
+    assert 'Some conclusions could not be verified' not in result
+    assert 'This report describes published information' not in result
+    assert result.index('Sources examined') < result.index('<strong>Scope:</strong>') < result.index('</article>')
+    assert result.count('<footer>') == 1
+
+
+@pytest.mark.parametrize('types,phrase', [
+    (['rest'], 'a REST API'), (['mcp'], 'an MCP surface'),
+    (['sdk'], 'an SDK'), (['cli'], 'a CLI'),
+    (['rest', 'mcp'], 'a REST API and an MCP surface'),
+    (['rest', 'sdk', 'cli'], 'a REST API, an SDK, and a CLI'),
+])
+def test_detected_interface_copy(report, types, phrase):
+    report = replace(report, classification=replace(report.classification, detected_types=types))
+    page = render_page('token', report)
+    assert 'Detected public interface' in page
+    assert f'Legible found public documentation describing {phrase}.' in page
+    assert 'Other integration surfaces may exist but were not confirmed in the public material examined.' in page
+
+
+def test_sections_cards_and_stable_order(report):
+    from legible.output.web import GROUPS
+    report = replace(report, findings=[replace(f, state='unknown', fix=None) for f in reversed(report.findings)])
+    page = render_page('token', report)
+    assert page.count('<details class="finding ') == 7
+    assert page.count('How to read this report') == 1
+    assert page.index('How to read this report') < page.index('<h3>Discover</h3>')
+    for name, description, ids in GROUPS:
+        section = page.split(f'<h3>{name}</h3>')[1].split('<section class="group">')[0]
+        assert description in section
+        positions = [section.index(f'id="{id}"') for id in ids]
+        assert positions == sorted(positions)
+        for id in COPY:
+            assert (f'id="{id}"' in section.split('<details class="sources">')[0]) == (id in ids)
+    assert 'Machine-readable errors' in page and 'Safe retry guidance' in page
+    assert 'Can an agent reliably interpret a failed response?' in page
+    assert 'Can an agent determine whether, when, and how to try again?' in page
+    assert 'consistent, machine-readable error format' in page
+    assert 'guidance for avoiding duplicate operations' in page
+    assert 'it may guess the wrong response' in page
+    assert 'Never retrying can cause an agent to abandon' in page
+    assert 'id="structured-errors"' not in page
+
+
+@pytest.mark.parametrize('state', ['fail', 'unknown', 'pass', 'not_applicable'])
+def test_outcome_actions_for_every_check(report, state):
+    from legible.output.web import VERIFY, finding_card
+    for original in report.findings:
+        finding = replace(original, state=state, fix='Existing engine remedy.')
+        card = finding_card(finding, report)
+        assert ('Recommended fix' in card) == (state == 'fail')
+        assert ('Existing engine remedy.' in card) == (state == 'fail')
+        assert ('What would verify this' in card) == (state == 'unknown')
+        assert (VERIFY[finding.id] in card) == (state == 'unknown')
+        assert 'Engine explanation.' in card
+    failure = replace(report.findings[0], state='fail', fix=None)
+    assert 'Recommended fix' not in finding_card(failure, report)
+
+
+def test_fix_first_limit_priority_and_links(report):
+    findings = [replace(f, state='fail', fix=f'Remedy for {f.id}.') for f in reversed(report.findings)]
+    page = render_page('token', replace(report, findings=findings))
+    summary = page.split('<section class="fix-first">')[1].split('</section>')[0]
+    assert summary.count('<li>') == 3
+    assert summary.index('#auth-mechanism') < summary.index('#key-issuance') < summary.index('#openapi')
+    for id in ['auth-mechanism', 'key-issuance', 'openapi']:
+        assert f'href="#{id}"' in summary and f'Remedy for {id}.' in summary
+        assert f'id="{id}"' in page
+    assert page.index('How to read this report') < page.index('Fix first') < page.index('<h3>Discover</h3>')
+    findings = [replace(f, state='unknown') if f.id != 'retry-guidance' else f for f in findings]
+    page = render_page('token', replace(report, findings=findings))
+    summary = page.split('<section class="fix-first">')[1].split('</section>')[0]
+    assert summary.count('<li>') == 1 and '#retry-guidance' in summary
+    assert '#auth-mechanism' not in summary
+    page = render_page('token', replace(report, findings=[replace(f, state='unknown') for f in findings]))
+    assert 'Fix first' not in page and 'Findings to review' not in page
+
+
+def test_cards_order_by_state_then_check_order(report):
+    states = {'openapi': 'pass', 'llms-txt': 'unknown', 'mcp-discovery': 'fail',
+              'auth-mechanism': 'not_applicable', 'key-issuance': 'pass',
+              'typed-errors': 'unknown', 'retry-guidance': 'fail'}
+    page = render_page('token', replace(report, findings=[replace(f, state=states[f.id]) for f in report.findings]))
+    for ids in [('mcp-discovery', 'llms-txt', 'openapi'), ('key-issuance', 'auth-mechanism'), ('retry-guidance', 'typed-errors')]:
+        positions = [page.index(f'id="{id}"') for id in ids]
+        assert positions == sorted(positions)
+
+
+def test_local_fetch_allowed_by_csp():
+    assert "connect-src 'self';" in request()
+
+
+def test_browser_interactions():
+    import shutil
+    import subprocess
+    from pathlib import Path
+    node = shutil.which('node')
+    if node is None:
+        pytest.skip('Optional Node runtime unavailable for client interaction harness')
+    root = Path(__file__).resolve().parents[1]
+    subprocess.run([node, 'tests/web_interactions.cjs'], cwd=root, check=True, capture_output=True, text=True)

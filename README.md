@@ -65,19 +65,45 @@ hosts, and these six files on the input origin: `/llms.txt`, `/openapi.json`,
 `/.well-known/mcp/server-card.json`. Host guesses preserve the scheme and port,
 strip a leading `www.`, and are skipped for IP addresses and single-label hosts.
 
-Discovery prioritizes explicit documentation entry points and publisher-provided
-indexes/specifications/MCP pointers, then structured file probes. It next selects
-API/request-authentication, credential-acquisition, error/schema, and retry/rate-limit links for unresolved checks,
-followed by host guesses and secondary documentation. Customer-authentication
-marketing does not receive API-authentication priority without developer context.
-Core reevaluates the seven pure checks between fetches; discovery uses unresolved
-check IDs to reorder candidates. Checks never fetch.
-Successful seed HTML and Markdown/text indexes supply links. One
-documentation-entry layer and one index layer may supply follow-ups, with a
-maximum navigation depth of three; terminal pages do not expand.
-Relative links use final response URLs. Origins stay restricted to initial origins
-and seed redirect origins. Queries, credentials, non-HTTP(S) URLs and fragments
-are rejected or removed; requested and final URLs are deduplicated.
+Discovery re-ranks published candidates after each fetch using the seven unresolved
+checks. Explicit OpenAPI/Swagger links, actionable retry descriptions, and error
+material precede generic navigation and speculative probes. Authentication and
+credential pointers outrank ordinary tutorials. Entry points and MCP/CLI/SDK links
+can reveal additional surfaces even after the existing checks settle.
+
+Successful HTML and Markdown/text resources may supply follow-ups within a maximum
+navigation depth of three. Link labels, nearby context, and Markdown descriptions
+are retained; navigation headings do not make every link relevant. Canonical
+plain-text contract URLs also count. Queries and embedded credentials are rejected;
+fragments are removed; requested and final URLs are deduplicated.
+
+Explicit high-signal publisher links may admit at most three additional related
+origins and two external artifacts. Related origins use the complete input host
+(with only `www.` removed) as an anchor, not a guessed registrable domain; a host
+suffix alone never grants access. External artifacts require a strong formal-spec,
+official-source, or canonical-doc pointer, or a documentation delegation from the
+homepage. External pages normally remain leaves. For an unresolved formal-spec
+check, one explicitly delegated artifact can start a single selected trail with at
+most three additional fetches: relevant repository directory, JSON/YAML file page,
+and its directly linked raw file. Traversal stays within the published repository
+path; a directly linked raw file is an exact terminal exception. Every step counts
+against the same 30-fetch ceiling and retains its publishing page and reason.
+At the ordinary depth boundary, one explicit formal-spec publication page may
+supply that external delegation. Published Markdown changelog indexes precede
+individual release navigation; JavaScript is not parsed or executed.
+New origins require HTTPS and public DNS answers. Origin-validation attempts are
+also capped. The fetch layer validates and pins public IP addresses on each
+connection, revalidates redirects, rejects HTTPS downgrades, and disables implicit
+proxies. Explicit loopback targets remain available for local testing, with no
+public-to-loopback redirects. Requests use an honest Legible user agent, general documentation Accept headers,
+and no credentials or cookies. Redirects rebuild only those public headers, reject
+loops and downgrades, and independently validate destinations. Nonstandard public
+ports and scoped/transition addresses are rejected. Each decoded response is limited
+to 16 MiB while streaming, including gzip/deflate responses; truncated or conflicting
+lengths are rejected. Five redirects share a 15-second request deadline with socket
+operations and streamed body reads. Blocking OS DNS and an in-progress socket/header
+read cannot be preempted by that deadline; there is no overall scan deadline.
+URL credentials and query values are redacted from retained URL metadata.
 
 The maximum is **30 fetch-layer calls**, including the homepage and at most 29
 published links. No guessed hosts or file paths were added. Discovery stops when
@@ -88,7 +114,7 @@ because they may expose another integration surface. Unresolved checks can use
 the remaining budget; incomplete evidence is never turned into failure to stop.
 It does not fill unused capacity after checks settle.
 Redirect hops are not separate candidate calls. This is a resource-count cap,
-not a byte or elapsed-time budget. The additive JSON `discovery.pending_urls`
+not an overall byte or elapsed-time budget. The additive JSON `discovery.pending_urls`
 field records candidates left unexamined when discovery stops, allowing
 checks to preserve uncertainty. The discovery object also records caps and surfaces.
 Each entry records `url`, `reason` (`homepage`, `likely_host`, `public_file`, or
@@ -104,8 +130,9 @@ Markdown renders the same classification and evidence.
 Classification performs no network activity. Narrow signals include OpenAPI or
 Swagger JSON/YAML document shapes, explicit API reference/REST documentation or
 REST API prose with HTTP endpoint examples,
-MCP server documentation with connection instructions, and SDK/CLI documentation
-with nearby installation commands. This recognizes published material, not its
+affirmative MCP provider documentation or connection metadata, and SDK/CLI documentation
+with installation or CLI usage instructions. Credential-stub support for third-party
+MCP servers and incidental MCP mentions do not establish a provider surface. This recognizes published material, not its
 validity or runtime behavior. Multiple observed types produce `mixed`. Specification
 recognition checks only the version and root info/paths mappings.
 Unrecognized discovery artifacts remain uncertain without a supported signal.
@@ -119,9 +146,9 @@ establish a positive type. Positive types do not imply exhaustive coverage.
 
 The seven checks are deterministic and make no network requests. OpenAPI recognizes
 JSON and safely parsed YAML with root version, info, and paths
-mappings (using PyYAML); this is not schema validation. An absence failure requires
-an established REST surface and explicit 404/410 responses at all examined spec candidates,
-including the three fixed probes. Unrecognized or unavailable artifacts are unknown.
+mappings (using PyYAML); this is not schema validation. An established REST surface
+without a verified formal specification remains unknown, including when speculative
+probes return 404/410. Prose contracts and llms.txt are not formal specifications.
 Authentication requires explicit machine-authentication prose; login UI and isolated
 keywords are insufficient. Credential issuance separately requires an acquisition
 action and destination for the documented credential. Explicit no-authentication
@@ -138,13 +165,14 @@ requests or behavioral validation are implemented.
 
 Step 6 adds the remaining four V1 checks without changing the report schema:
 
-- `llms-txt` recognizes useful Markdown documentation links in a fetched text index
+- `llms-txt` recognizes useful documentation links or concise integration instructions in a fetched text index
   at a defined llms/index path or an explicitly published machine-readable index.
   Main-host and documentation-host indexes count; HTML fallbacks and mentions do not.
   Absence fails only with an established surface, examined candidate locations, and
   complete bounded coverage. An unexamined docs-host index keeps the result unknown.
 - `typed-errors` recognizes documented JSON error objects, named error codes, and
-  OpenAPI error response schemas, including bounded local references. Status lists
+  rendered attribute/code tables, SDK error-attribute examples, and OpenAPI error
+  response schemas, including bounded local references. Status lists
   and generic error prose cannot pass. A failure requires examined exposed error
   semantics and complete coverage; ambiguous prose remains unknown.
 - `retry-guidance` recognizes Retry-After instructions, exponential backoff, safe
@@ -161,5 +189,29 @@ prevents absence-based failures. Unknown findings never generate remediation.
 These conservative recognizers are not exhaustive documentation/schema parsers:
 unsupported index formats, MCP metadata variants, external schema references,
 ambiguous wording, and inaccessible or deeply nested documentation may remain unknown.
-The existing classifier is unchanged; a recognized connection artifact can establish
-MCP applicability for its check even when classification remains uncertain.
+Classification and the MCP check share provider/connection recognition. Browser evidence
+selection prefers direct passages and deduplicates equivalent HTML/Markdown excerpts;
+full fetched observations remain under Sources examined.
+
+
+Fetched evidence is shared across all seven checks; the discovery reason selects
+where to look, not which evaluator may inspect a response. Block-page detection
+uses response-level challenge titles or short challenge bodies, not error-message
+phrases anywhere in a documentation page. The original bounded body remains the
+source of truth, with immutable derived text/heading/list/table/code-block views.
+Existing link extraction and discovery provenance remain available from that body.
+
+Real fetch observations now include optional additive `metadata` (method, safe
+redirect hops, encoded bytes read, decoded bytes retained, truncation, and content
+encoding) and `canonical_url` in JSON. Legacy observations without transport
+metadata retain their existing serialized fields. These canonical URLs are
+traceability keys; they do not replace discovery's conservative URL admission or
+merge observations. HEAD bodies are never evidence, and an injected prior HEAD
+observation cannot mark a document content-fetched; production scans use GET only.
+
+`analyze.diagnostics.diagnose_evidence` is a pure internal inspection helper over
+these same observations. It distinguishes failed fetches, unsupported responses,
+unavailable/truncated bodies, evaluator eligibility, examined but unrecognized
+evidence, and exhausted budgets. An explicit expected URL can be diagnosed as
+undiscovered; the helper does not invent missing URLs or make network requests.
+Diagnostic output does not change finding states or the browser presentation.

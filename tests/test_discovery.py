@@ -12,6 +12,15 @@ from legible.fetch.models import FetchObservation
 HOME = 'https://example.com/'
 
 
+@pytest.fixture(autouse=True)
+def no_live_origin_resolution(monkeypatch):
+    # Older rejection fixtures exercise unresolved external/related destinations.
+    from legible.fetch import safety
+    def unavailable(*args, **kwargs):
+        raise OSError('Synthetic DNS unavailable')
+    monkeypatch.setattr(safety.socket, 'getaddrinfo', unavailable)
+
+
 def html(url, text='', final=None):
     return FetchObservation(url, final or url, 200, 'text/html; charset=utf-8', text)
 
@@ -51,7 +60,7 @@ def test_www_host_guesses_preserve_scheme_port():
     assert candidates[1] == ('http://docs.example.com:8080/', 'likely_host')
 
 
-def test_links_use_redirect_base_deduplicate_and_do_not_recurse():
+def test_links_use_redirect_base_deduplicate_and_follow_relevant_leaves():
     home = html(HOME, '''
         <a href="auth#keys">Authentication</a>
         <a href="auth#other">Duplicate</a>
@@ -67,7 +76,7 @@ def test_links_use_redirect_base_deduplicate_and_do_not_recurse():
     assert calls.count(docs) == 1
     assert calls.count(auth) == 1
     assert 'https://docs.example.com/rate-limits' in calls
-    assert not any('deeper' in url for url in calls)
+    assert 'https://www.example.com/errors/deeper' in calls
     surface = next(s for s in result.surfaces if s.url == auth)
     assert surface.source_url == home.final_url
     assert surface.link_text == 'Authentication'

@@ -10,7 +10,6 @@ from legible.discover.surfaces import DiscoveryResult
 from legible.fix.fixer import remediation
 
 SPEC_PATHS = {'/openapi.json', '/openapi.yaml', '/swagger.json'}
-BLOCKED = re.compile(r'access denied|verify you are human|captcha|enable javascript|sign in to continue', re.I)
 NEGATIVE = re.compile(r'\b(?:not|never|unsupported|planned|might|may|could|example only|coming soon)\b', re.I)
 MECHANISM = re.compile(r'\b(?:API[ -]keys?|bearer tokens?|OAuth(?: 2(?:\.0)?)?|signed requests?|HTTP Basic(?: Auth(?:entication)?)?|mutual TLS|mTLS|HMAC)\b', re.I)
 CONTEXT = re.compile(r'\b(?:API|requests?|SDK|CLI|MCP|server)\b', re.I)
@@ -34,23 +33,24 @@ def analyze_surface(discovery: DiscoveryResult, classification: SurfaceClassific
     specs = {i: value for i, o in enumerate(observations) if (value := _spec(o))}
     docs = {e.observation_index for e in classification.evidence if e.signal.endswith('-documentation')}
     docs.update(s.observation_index for s in discovery.surfaces
-                if s.reason in {'likely_host', 'published_link'} and s.observation_index not in spec_indices)
+                if (s.reason in {'likely_host', 'published_link'} or s.url.endswith('/llms.txt') and texts.get(s.observation_index)) and s.observation_index not in spec_indices)
     # Homepage prose can supplement an established integration surface.
     if observations and texts.get(0) and NO_AUTH.search(texts[0]):
         docs.add(0)
-    readable = {i: t for i in docs if (t := texts.get(i)) and not BLOCKED.search(t)
+    readable = {i: t for i, t in texts.items() if t
                 and (observations[i].content_type or '').split(';')[0] in
                 {'text/html', 'application/xhtml+xml', 'text/plain', 'text/markdown'}}
     readable = {i: t for i, t in readable.items() if len(t.split()) >= 4 and re.search(
         r'REST(?:ful)? API|API reference|authentication|authenticate|API[ -]keys?|bearer|OAuth|HTTP Basic|credentials?|API requests?|SDK|CLI|MCP server', t, re.I)
         and not re.fullmatch(r'(?:login|log in|sign in|sign up|signup|\s)+', t, re.I)}
+    docs.update(readable)
     unresolved = any(i not in readable and not (
         observations[i].status in {404, 410} and any(s.observation_index == i and s.reason == 'likely_host'
                                                    for s in discovery.surfaces)) for i in docs)
     unresolved |= bool(discovery.pending_urls)
     speculative = {s.observation_index for s in discovery.surfaces if s.reason == 'likely_host'}
     unavailable = any(
-        (texts.get(i) is None or BLOCKED.search(texts.get(i) or ''))
+        texts.get(i) is None
         for i in docs - speculative)
     unavailable |= bool(observations and texts.get(0) is None)
     unresolved |= bool(observations and texts.get(0) is None)
@@ -58,11 +58,24 @@ def analyze_surface(discovery: DiscoveryResult, classification: SurfaceClassific
                   for sentence in re.split(r'(?<=[.!?])\s+', t)]
     auth = [(i, s) for i, s in statements if MECHANISM.search(s) and (CONTEXT.search(s) or re.search(r'HTTP Basic|bearer|OAuth|mTLS|mutual TLS|HMAC', s, re.I))
             and AUTH_ACTION.search(s) and not NEGATIVE.search(s)]
+    headers = [(i, m[0]) for i, sentence in statements if not NEGATIVE.search(sentence)
+               for m in re.finditer(r'Authorization\s*:\s*Bearer\s+[\w${}.-]+', sentence, re.I)]
+    headers = list(dict.fromkeys(headers))
+    auth = headers + auth
     no_auth = [(i, s) for i, s in statements if NO_AUTH.search(s)]
     issuance = [(i, s) for i, s in statements if MECHANISM.search(s) and ACQUIRE.search(s)
                 and DESTINATION.search(s) and not NEGATIVE.search(s)
-                and any(MECHANISM.search(a).group().lower().rstrip('s') ==
+                and any(MECHANISM.search(a) and MECHANISM.search(a).group().lower().rstrip('s') ==
                         MECHANISM.search(s).group().lower().rstrip('s') for _, a in auth)]
+
+    for i, t in readable.items():
+        if not any(index == i for index, _ in auth):
+            continue
+        for block in observations[i].document.blocks:
+            if (block.kind in {'p', 'li', 'paragraph'} and ACQUIRE.search(block.text) and re.search(r'\b(?:API[ -]key|key|token)s?\b', block.text, re.I)
+                    and re.search(r'API (?:access|keys? page)|dashboard|console|developer portal|token endpoint', block.text, re.I)
+                    and not NEGATIVE.search(block.text)):
+                issuance.append((i, block.text))
 
     def finding(id, title, state, reason, indices, matches=()):
         indices = set(indices) | {e.observation_index for e in classification.evidence
@@ -89,12 +102,8 @@ def analyze_surface(discovery: DiscoveryResult, classification: SurfaceClassific
         state, reason = 'not_applicable', 'No REST surface established in the observed classification.'
     elif 'rest' not in classification.detected_types:
         state, reason = 'unknown', 'REST applicability is unresolved.'
-    elif (SPEC_PATHS <= {urlsplit(observations[i].requested_url).path for i in spec_indices}
-          and all(observations[i].status in {404, 410} for i in spec_indices)
-          and not discovery.pending_urls and texts.get(0) is not None):
-        state, reason = 'fail', 'Examined spec locations returned 404/410; no specification found in this bounded scan.'
     else:
-        state, reason = 'unknown', 'Spec coverage is incomplete or responses are unreadable, ambiguous, or unrecognized.'
+        state, reason = 'unknown', 'A public REST interface was established, but no recognized formal machine-readable API specification was verified in the examined material.'
     results = [finding('openapi', 'Public API specification', state, reason, spec_indices | specs.keys(), specs.items())]
     if absent:
         state, reason = 'not_applicable', 'No public integration surface observed.'
@@ -124,5 +133,5 @@ def analyze_surface(discovery: DiscoveryResult, classification: SurfaceClassific
             state, reason = 'fail', 'Authentication is documented, but examined documentation gives no credential acquisition path.'
     elif state != 'not_applicable':
         state, reason = 'unknown', 'Credential requirements or authentication mechanism remain unresolved.'
-    results.append(finding('key-issuance', 'Credential issuance', state, reason, docs, auth + issuance + no_auth))
+    results.append(finding('key-issuance', 'Credential issuance', state, reason, docs, issuance + auth + no_auth))
     return results + remaining_checks(discovery, classification, finding)

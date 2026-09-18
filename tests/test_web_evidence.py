@@ -81,7 +81,7 @@ def test_unknown_relevant_attempts_and_no_remedy():
     selected = select_evidence(finding, report)
     assert len(selected) == 1 and selected[0].status == 503
     card = finding_card(finding, report)
-    assert 'How to fix' not in card and 'Do not show this' not in card
+    assert 'Recommended fix' not in card and 'Do not show this' not in card
 
 
 def test_not_applicable_compact_and_failure_has_engine_remedy():
@@ -99,3 +99,23 @@ def test_unknown_evidence_is_capped_at_three_relevant_attempts():
     assert len(selected) == 3
     assert finding_card(report.findings[0], report).count('<li>') == 3
     assert len(report.findings[0].evidence) == 7
+
+
+def test_equivalent_renderings_share_evidence_slot_and_keep_sources():
+    text = 'Error response: {"error":{"code":"invalid_input","message":"Bad input"}}'
+    report = make_report('typed-errors', [('/errors.html', text, 'text/html', 200),
+                                         ('/errors.md', text, 'text/markdown', 200)])
+    selected = select_evidence(report.findings[0], report)
+    assert len(selected) == 1
+    page = render_report(report)
+    sources = page.split('<details class="sources">')[1]
+    assert '/errors.html' in sources and '/errors.md' in sources
+
+
+def test_specific_evidence_beyond_generic_retained_excerpt():
+    text = 'General API navigation. ' * 100 + 'Error response: {"error":{"code":"invalid_input","message":"Bad input"}}'
+    report = make_report('typed-errors', [('/errors', text, 'text/plain', 200)])
+    report = replace(report, findings=[replace(report.findings[0], evidence=[
+        replace(report.findings[0].evidence[0], excerpt='General API navigation.')])])
+    selected = select_evidence(report.findings[0], report)
+    assert len(selected) == 1 and 'invalid_input' in selected[0].excerpt

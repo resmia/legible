@@ -97,7 +97,7 @@ def test_spec_ambiguous_is_unknown(body, status, error):
 
 
 def test_spec_applicability_and_absence():
-    assert check()['openapi'].state == 'fail'
+    assert check()['openapi'].state == 'unknown'  # Bounded probes cannot establish absence.
     assert check('MCP server: connect your client.')['openapi'].state == 'not_applicable'
     assert check('Developer docs soon.')['openapi'].state == 'unknown'
 

@@ -45,7 +45,7 @@ def response(body=b'<html>Hello</html>', content_type='text/html; charset=utf-8'
     result.geturl.return_value = 'https://www.example.com/'
     result.status = 200
     result.headers = headers
-    result.read.return_value = body
+    result.read.side_effect = io.BytesIO(body).read
     return result
 
 
@@ -121,7 +121,7 @@ def test_writer_adds_observations_and_renders_sources(tmp_path):
     report = json.loads((run_path / 'report.json').read_text())
     assert report == {
         'url': 'https://example.com/',
-        'observations': [asdict(observation)],
+        'observations': [{key: value for key, value in asdict(observation).items() if key != 'metadata'}],
         'finding_count': 1, 'fix_count': 1,
         'findings': [asdict(Finding('example', 'Example finding', 'unknown', observation.final_url, [], 'Example fix'))], 'fixes': ['Example fix'],
     }

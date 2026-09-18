@@ -2,12 +2,14 @@
 
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from html.parser import HTMLParser
 from ipaddress import ip_address
 import re
 from urllib.parse import urljoin, urlsplit, urlunsplit
 
 from legible.fetch.models import FetchObservation
+from legible.fetch.safety import validate_public_url, related_host, UnsafeURL
+from legible.discover.links import published_links
+from legible.discover.artifacts import ArtifactChain
 
 DOC_HOSTS = ("docs", "api", "developer", "developers")
 PUBLIC_FILES = (
@@ -17,9 +19,11 @@ PUBLIC_FILES = (
 MAX_LINKS = 29
 MAX_FETCHES = 30
 MAX_NAVIGATION_DEPTH = 3
+MAX_RELATED_ORIGINS = 3
+MAX_EXTERNAL_ARTIFACTS = 2
 RELEVANT = re.compile(
     r"\b(?:api|docs|documentation|developer|developers|authentication|auth|credentials?|keys?|tokens?|oauth|bearer|authorization|secrets?|settings|getting[ _-]?started|llms|reference|index[.](?:md|txt)|"
-    r"errors?|backoff|idempotency|429|schema|rate[\s_-]*limits?|retr(?:y|ies)|mcp|agent[\s_-]*setup|openapi|swagger)\b",
+    r"changelog|development|quickstart|integration|specification|cli|command[ -]line|sdk|model context protocol|errors?|backoff|idempotency|429|schema|rate[\s_-]*limits?|retr(?:y|ies)|mcp|agent[\s_-]*setup|openapi|swagger)\b",
     re.IGNORECASE,
 )
 
@@ -85,41 +89,6 @@ def initial_candidates(homepage: str) -> list[tuple[str, str]]:
     return candidates
 
 
-class _Links(HTMLParser):
-    def __init__(self, accept: Callable[[str, str], None]):
-        super().__init__(convert_charrefs=True)
-        self.accept = accept
-        self.href: str | None = None
-        self.label: list[str] = []
-        self.visible: list[str] = []
-        self.hidden = 0
-
-    def handle_starttag(self, tag, attrs):
-        if tag in {'script', 'style', 'template'}:
-            self.hidden += 1
-        if self.hidden:
-            return
-        if tag == "a":
-            self.handle_endtag("a")
-            self.href = dict(attrs).get("href")
-            self.label = []
-
-    def handle_data(self, data):
-        if self.hidden:
-            return
-        self.visible.append(data)
-        if self.href is not None:
-            self.label.append(data)
-
-    def handle_endtag(self, tag):
-        if tag in {'script', 'style', 'template'} and self.hidden:
-            self.hidden -= 1
-        if tag == "a" and self.href is not None:
-            self.accept(self.href, " ".join(" ".join(self.label).split()))
-            self.href = None
-            self.label = []
-
-
 IMPLEMENTED_CHECKS = frozenset({'openapi', 'auth-mechanism', 'key-issuance', 'llms-txt', 'typed-errors', 'retry-guidance', 'mcp-discovery'})
 
 
@@ -130,50 +99,47 @@ def _priority(url, label, reason, unresolved):
     if reason == 'likely_host':
         return 5
     path = urlsplit(url).path
+    direct = re.sub(r'[-_/]', ' ', f'{path} {label.split(" — ", 1)[0]}').lower()
     value = re.sub(r'[-_/]', ' ', f'{path} {label}').lower()
-    if (re.search(r'llms|openapi|swagger|index\.(?:md|txt|json)|\bmcp\b', value)
-            or re.fullmatch(r'/(?:docs|documentation|developers?|reference|api)/?', path)
-            or re.fullmatch(r'(?:api reference|developer documentation|documentation|docs)', label, re.I)
-            or (path == '/' and re.search(r'docs|documentation|developer|reference', label, re.I))):
+    if 'openapi' in unresolved and re.search(r'openapi|swagger|api specification', value):
+        return -3
+    if 'retry-guidance' in unresolved and re.search(r'safe to retry|retryable|backoff|retry|retries|rate.limit|idempotenc', value):
+        return -2
+    if 'typed-errors' in unresolved and re.search(r'error|failure|error schema', value):
+        return -1
+    if re.search(r'llms|openapi|swagger|index\.(?:md|txt|json)|\bmcp\b|model context protocol|\bcli\b|command.line|\bsdk\b|developer resources|developer docs|\bdevelopment\b', direct):
         return 0
-    developer = bool(re.search(
-        r'\bapi\b|request|authorization header|bearer|credential|developer|'
-        r'token endpoint|oauth.*(?:client|access)|(?:client|access).*oauth', value))
-    consumer = bool(re.search(
-        r'\buser\b|customer|consumer|identity|verification|\bmfa\b|\b2fa\b|fraud|ebook|marketing', value))
-    issuance = bool(re.search(
-        r'api keys?|credentials?|(?:create|get|generate|obtain|exchange).*token|'
-        r'token.*(?:creation|acquisition|endpoint)|developer.*(?:settings|keys)|'
-        r'(?:dashboard|settings|getting started)', value))
-    if 'key-issuance' in unresolved and issuance and (developer or not consumer):
-        return 3
-    if ('auth-mechanism' in unresolved and developer and
-            re.search(r'auth|bearer|api keys?|credential|oauth|token|secrets?', value)):
-        return 4
-    needs = {'typed-errors': r'error|schema|failure',
-             'retry-guidance': r'retry|retries|backoff|rate.limit|429|idempotenc',
-             'llms-txt': r'machine.readable.*(?:index|documentation)',
-             'mcp-discovery': r'server.card|well.known|mcp.*(?:setup|endpoint)'}
-    if any(check in unresolved and re.search(pattern, value) for check, pattern in needs.items()):
-        return 4
-    # General docs may help, but never preempt explicit check-relevant pointers.
+    consumer = bool(re.search(r'\buser\b|customer|consumer|identity|verification|\bmfa\b|\b2fa\b|fraud|ebook|marketing', value))
+    if not consumer:
+        if 'key-issuance' in unresolved and re.search(r'api keys?|credential|dashboard|settings|token endpoint', value):
+            return 0.5
+        if 'auth-mechanism' in unresolved and re.search(r'auth|bearer|oauth|api keys?|credential', value):
+            return 1 if re.search(r'api|request|bearer|credential|oauth', value) else 1.5
+    if 'openapi' in unresolved and re.search(r'changelog|api version', direct):
+        # A published text index precedes individual release navigation.
+        return 1.7 if re.search(r'/(?:changelog|versions?)\.md$', path) else 1.75
+    if (re.fullmatch(r'/(?:docs|documentation|developers?|reference|api)/?', path)
+            or re.fullmatch(r'(?:api reference|developer documentation|documentation|docs)', label, re.I)):
+        return 0
     return 6
 
 
 def discover_surfaces(homepage: FetchObservation,
                       fetch: Callable[[str], FetchObservation],
                       unresolved_checks: Callable[[DiscoveryResult], frozenset[str]] | None = None) -> DiscoveryResult:
-    """Expand seeds, one docs-entry layer, and one index layer; never crawl leaves.
-
-    Published pointers preempt guesses. Origins remain restricted to fixed seeds
-    and their redirects. A finite queue and depth cap bound follow-up work.
-    """
+    """Re-rank published integration trails after each fetch; cap depth and origins."""
     result = DiscoveryResult()
     candidates = initial_candidates(homepage.requested_url)
     allowed = {_origin(url) for url, _ in candidates}
     seen = set()
     pending = {}
     sequence = 0
+    related = set()
+    external = set()
+    root_host = urlsplit(homepage.requested_url).hostname
+    external_urls = set()
+    checked_origins = {}
+    artifact_chain = None
 
     def enqueue(url, reason, source=None, label=None, depth=0):
         nonlocal sequence
@@ -187,9 +153,14 @@ def discover_surfaces(homepage: FetchObservation,
             sequence += 1
 
     def add(observation, reason, source=None, label=None, depth=0):
+        nonlocal artifact_chain
         result.surfaces.append(DiscoveredSurface(
             observation.requested_url, reason, source, label, len(result.observations)))
         result.observations.append(observation)
+        if observation.metadata and observation.metadata.method != 'GET':
+            # A probe is retained for provenance, never treated as content fetched.
+            enqueue(observation.requested_url, reason, source, label, depth)
+            return
         for value in (observation.requested_url, observation.final_url):
             url = _public_url(value) if value else None
             if url:
@@ -202,38 +173,106 @@ def discover_surfaces(homepage: FetchObservation,
                 or not 200 <= observation.status < 300 or not observation.text):
             return
         source = observation.final_url or observation.requested_url
-        path = urlsplit(source).path
-        index = bool(re.search(r'(?:llms(?:-full)?|index)\.(?:txt|md)$', path, re.I))
-        entry = path == '/' or bool(re.fullmatch(r'/(?:docs|documentation|developers?|reference|api)/?', path))
-        # Only named navigation surfaces expand beyond the initial seeds.
-        if depth >= MAX_NAVIGATION_DEPTH or (depth and not (index or (depth == 1 and entry))):
+        if observation.requested_url in external_urls:
+            if artifact_chain and observation.requested_url in artifact_chain.steps:
+                unresolved = unresolved_checks(result) if unresolved_checks else IMPLEMENTED_CHECKS
+                if 'openapi' in unresolved:
+                    next_step = artifact_chain.follow(observation, _public_url)
+                    if next_step:
+                        url, title = next_step
+                        try:
+                            validate_public_url(url)
+                        except (UnsafeURL, OSError, ValueError):
+                            return
+                        external_urls.add(url)
+                        enqueue(url, 'published_link', source,
+                                'Bounded OpenAPI artifact step: ' + title, depth + 1)
             return
-
-        def accept(href, label):
-            if not href or href.startswith('#'):
-                return
+        # Every readable official resource can emit ranked candidates, within depth.
+        # External artifacts are leaves, not new crawl roots.
+        links = published_links(observation.text, media)
+        def link_rank(link):
             try:
-                url = _public_url(urljoin(source, href))
+                return _priority(urljoin(source, link.href), link.label + ' ' + link.context, 'published_link', IMPLEMENTED_CHECKS)
             except ValueError:
-                return
-            if (url and _origin(url) in allowed
-                    and RELEVANT.search(f'{urlsplit(url).path} {label}')):
-                enqueue(url, 'published_link', source, label, depth + 1)
-
-        if media in {'text/html', 'application/xhtml+xml'}:
-            parser = _Links(accept)
-            parser.feed(observation.text)
-            parser.close()
-            parser.handle_endtag('a')
-        elif media in {'text/plain', 'text/markdown'}:
-            for match in re.finditer(r'\[([^]\n]+)\]\(([^)\s]+)\)', observation.text):
-                accept(match[2], match[1])
-        # Publishers also advertise indexes as literal paths in visible prose.
-        if media in {'text/html', 'application/xhtml+xml', 'text/plain', 'text/markdown'}:
-            visible = ' '.join(parser.visible) if media in {'text/html', 'application/xhtml+xml'} else observation.text
-            for match in re.finditer(r'(?:https?://[^\s<>"`]+)?/[\w./-]*llms(?:-full)?\.txt',
-                                     visible):
-                accept(match[0], 'Published machine-readable index')
+                return 99
+        links.sort(key=link_rank)
+        for link in links:
+            if not link.href or link.href.startswith('#'):
+                continue
+            try:
+                url = _public_url(urljoin(source, link.href))
+            except ValueError:
+                continue
+            if not url:
+                continue
+            # Base URLs describe a surface; do not execute published API paths.
+            if link.label == 'Published integration location' and re.search(r'API base URL', link.context, re.I):
+                url = _origin(url)
+            if url in seen:
+                continue
+            meaning = link.label + (' ' + link.context if not link.navigation else '')
+            if not RELEVANT.search(f'{urlsplit(url).path} {meaning}'):
+                continue
+            origin = _origin(url)
+            # At the navigation boundary permit one explicit formal-spec publication
+            # page, then only its external artifact. Ordinary crawling still stops.
+            if depth >= MAX_NAVIGATION_DEPTH and not (
+                    (depth == MAX_NAVIGATION_DEPTH or
+                     depth == MAX_NAVIGATION_DEPTH + 1 and origin not in allowed)
+                    and re.search(r'openapi|swagger|API specification|API schema', meaning, re.I)):
+                continue
+            admission = ''
+            if origin not in allowed:
+                host = urlsplit(url).hostname
+                is_related = related_host(host, root_host)
+                # An explicit publisher pointer grants a bounded delegation, not
+                # inferred ownership. Deceptive suffixes cannot use related capacity.
+                if root_host.removeprefix('www.') + '.' in host and not is_related:
+                    continue
+                strong = re.search(r'openapi|swagger|specification|schema|canonical|machine.readable|documentation|docs|official.*(?:source|repository)|sdk',
+                                   f'{urlsplit(url).path} {meaning}', re.I)
+                if not strong:
+                    continue
+                if not is_related:
+                    artifact = re.search(r'openapi|swagger|API specification|API schema|official.*(?:source|repository|SDK)|canonical.*(?:docs|documentation|contract)',
+                                         f'{urlsplit(url).path} {link.label}', re.I)
+                    delegated_docs = depth == 0 and re.search(r'\bdocs\b|documentation|developer', link.label, re.I)
+                    if not (artifact or delegated_docs):
+                        continue
+                if is_related:
+                    if origin not in related and len(related) >= MAX_RELATED_ORIGINS:
+                        continue
+                elif url not in external and len(external) >= MAX_EXTERNAL_ARTIFACTS:
+                    continue
+                if origin not in checked_origins:
+                    if len(checked_origins) >= MAX_RELATED_ORIGINS + MAX_EXTERNAL_ARTIFACTS + 3:
+                        continue
+                    try:
+                        validate_public_url(url)
+                        checked_origins[origin] = True
+                    except (UnsafeURL, OSError, ValueError):
+                        checked_origins[origin] = False
+                if not checked_origins[origin]:
+                    continue
+                if is_related:
+                    related.add(origin)
+                    allowed.add(origin)
+                    admission = 'Explicit related-origin documentation: '
+                else:
+                    external.add(url)
+                    external_urls.add(url)
+                    admission = 'Explicit one-hop external artifact: '
+                    if artifact_chain is None and re.search(r'openapi|swagger|API specification|API schema|API contract',
+                                                           f'{urlsplit(url).path} {meaning}', re.I):
+                        artifact_chain = ArtifactChain(url)
+            if origin in related and not admission:
+                admission = 'Explicit related-origin documentation: '
+            # Keep original labels plus publisher context in existing provenance fields.
+            label = admission + link.label
+            if not link.navigation and link.context.strip() and link.context.strip() != link.label.strip():
+                label += ' — ' + link.context.strip()
+            enqueue(url, 'published_link', source, label, depth + 1)
 
     for url, reason in candidates[1:]:
         enqueue(url, reason)
@@ -244,7 +283,7 @@ def discover_surfaces(homepage: FetchObservation,
         unresolved = unresolved_checks(result) if unresolved_checks else IMPLEMENTED_CHECKS
         def rank(item):
             _, order, url, reason, _, label, _ = item
-            return (_priority(url, label or '', reason, unresolved), order)
+            return (_priority(url, label or '', reason, unresolved), item[6], order)
         item = min(pending.values(), key=rank)
         # Explicit entry/index/spec/MCP pointers can reveal another surface even
         # after positive findings. Lower-priority work needs an unresolved check.
